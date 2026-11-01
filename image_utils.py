@@ -38,9 +38,12 @@ def _get_cjk_font(size):
 
 
 def draw_bottom_right_label(image_bgr, text, margin=18, font_size=None,
-                            text_color=(70, 70, 70), bg_color=(255, 255, 255, 210)):
+                            text_color=(70, 70, 70), bg_color=(255, 255, 255, 210),
+                            raise_ratio=0.5):
     """在图片右下角画一行来源标注（带半透明白底，避免压住照片看不清）。
 
+    raise_ratio：垂直方向额外上移的字高倍数（默认 0.5 = 半个字符高，
+    避免标注贴底太紧、裁切/冲印时被修边吃掉）。
     只处理右下角的小块区域（不整页做 RGBA 合成），100 多页也不会明显变慢。
     返回同一张图（原地修改）。
     """
@@ -60,7 +63,8 @@ def draw_bottom_right_label(image_bgr, text, margin=18, font_size=None,
     box_h = min(height, text_h + pad_y * 2)
 
     x0 = max(0, width - margin - box_w)
-    y0 = max(0, height - margin - box_h)
+    # 垂直方向比水平多让开半个字符高：标注更靠上，不会被页边裁掉
+    y0 = max(0, height - margin - box_h - int(round(size * max(0.0, raise_ratio))))
     x1 = min(width, x0 + box_w)
     y1 = min(height, y0 + box_h)
 
