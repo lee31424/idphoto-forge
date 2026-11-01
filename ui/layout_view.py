@@ -217,6 +217,16 @@ class LayoutView(QWidget):
         card.addSpacing(8)
         card.addLayout(btn_grid_bot)
 
+        # 多页排版：把「当前所有排版页」一次性导出到所选文件夹（每页一个文件）
+        export_all_row = QHBoxLayout()
+        export_all_row.setSpacing(10)
+        export_all_btn = theme.block_button(
+            "导出全部排版图", False, FluentIcon.SAVE_AS,
+            lambda: self.c.on_export_all_layouts())
+        export_all_row.addWidget(export_all_btn, 1)
+        card.addSpacing(8)
+        card.addLayout(export_all_row)
+
         # 打印：把当前排版页直接送打印机（系统打印对话框，带入已选打印机）
         print_row = QHBoxLayout()
         print_row.setSpacing(10)

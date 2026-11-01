@@ -430,6 +430,71 @@ def test_layout_picks_hd_by_target(win):
     win.layout_pane.mixed_items = []
 
 
+def test_ready_list_hd_marker(win):
+    """成品列表：有高清版的条目带 HD 标记，没有的不带。"""
+    small = np.full((100, 80, 4), 90, dtype=np.uint8)
+    big = np.full((200, 160, 4), 90, dtype=np.uint8)
+    win.ready_photos = [
+        {"name": "plain.png", "path": "", "image": small, "matting": None, "hd": None},
+        {"name": "sharp.png", "path": "", "image": small, "matting": None, "hd": big},
+    ]
+    win.layout_pane.refresh_ready_list()
+    lb = win.layout_pane.ready_listbox
+    assert lb.count() == 2, lb.count()
+    assert "HD" not in lb.item(0).text(), lb.item(0).text()
+    assert "HD" in lb.item(1).text(), lb.item(1).text()
+    assert lb.item(1).toolTip(), "HD 条目应有说明 tooltip"
+    win.ready_photos = []
+    win.layout_pane.refresh_ready_list()
+
+
+def test_export_all_layouts(win, app):
+    """批量导出排版图：所有页各写一个文件，命名 排版图_01/02/…。"""
+    import app as appmod
+
+    page = np.full((300, 200, 3), 180, dtype=np.uint8)
+    win.layout_pages = [page.copy() for _ in range(3)]
+    with tempfile.TemporaryDirectory() as tmpdir:
+        orig = appmod.QFileDialog.getExistingDirectory
+        appmod.QFileDialog.getExistingDirectory = staticmethod(
+            lambda *a, **k: tmpdir)
+        try:
+            win.on_export_all_layouts()
+        finally:
+            appmod.QFileDialog.getExistingDirectory = orig
+
+        files = sorted(os.listdir(tmpdir))
+        assert files == ["排版图_01.png", "排版图_02.png", "排版图_03.png"], files
+        for f in files:
+            # 文件名含中文：cv2.imread 在 Windows 上读不了非 ASCII 路径，
+            # 用 imdecode（和 app._load_image 的做法一致）来校验
+            buf = np.fromfile(os.path.join(tmpdir, f), dtype=np.uint8)
+            img = cv2.imdecode(buf, cv2.IMREAD_UNCHANGED)
+            assert img is not None, f"{f} 读不出来"
+            assert img.shape == (300, 200, 3), f"{f} 尺寸 {img.shape}"
+
+    # 输出格式切到 JPEG 时，导出应为真 JPEG
+    lv = win.pages["layout"]
+    old_fmt = lv.get_format()
+    lv.export_format_group.set("jpg")
+    try:
+        with tempfile.TemporaryDirectory() as jdir:
+            orig = appmod.QFileDialog.getExistingDirectory
+            appmod.QFileDialog.getExistingDirectory = staticmethod(
+                lambda *a, **k: jdir)
+            try:
+                win.on_export_all_layouts()
+            finally:
+                appmod.QFileDialog.getExistingDirectory = orig
+            files = sorted(os.listdir(jdir))
+            assert files == ["排版图_01.jpg", "排版图_02.jpg", "排版图_03.jpg"], files
+            with open(os.path.join(jdir, files[0]), "rb") as fh:
+                assert fh.read(3) == b"\xff\xd8\xff", "JPEG 格式不对"
+    finally:
+        lv.export_format_group.set(old_fmt)
+    win.layout_pages = []
+
+
 def test_defaults_and_dropdowns(win):
     """人脸旋转校正默认开启；两个页面下拉里的规格一致。"""
     pv = win.pages["process"]
@@ -473,6 +538,8 @@ def main():
         check("数量输入框可见（不用 SpinBox）", lambda: test_count_field_visible(win))
         check("选项默认值（出血50/横距20/纵距20）", lambda: test_layout_option_defaults(win))
         check("排版按规格自动选高清图", lambda: test_layout_picks_hd_by_target(win))
+        check("成品列表 HD 标记", lambda: test_ready_list_hd_marker(win))
+        check("批量导出排版图（多页）", lambda: test_export_all_layouts(win, app))
         check("旋转校正默认开启 + 下拉一致",
               lambda: test_defaults_and_dropdowns(win))
     finally:

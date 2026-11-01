@@ -2004,6 +2004,72 @@ class IDPhotoApp(QMainWindow):
         except Exception as e:
             theme.info(self, "error", "保存失败", str(e))
 
+    def on_export_all_layouts(self):
+        """把当前所有排版页一次性导出到所选文件夹（每页一个文件）。
+
+        与「保存排版图」的区别：那个只保存预览中的那一页，多页排版时要一页页点；
+        这个按页序导出全部，命名 `排版图_01 / _02 / …`。
+        输出格式 / DPI / KB 限制与单张导出共用同一套设置。
+        """
+        if not self.layout_pages:
+            theme.info(self, "warning", "提示",
+                       "还没有排版图，请先在「排版规格」里点「排版」生成。")
+            return
+        folder = QFileDialog.getExistingDirectory(self, "选择排版图导出文件夹")
+        if not folder:
+            return
+
+        try:
+            dpi = int(self.pages["process"].dpi_combo.currentText())
+        except Exception:
+            dpi = 300
+        try:
+            kb_limit = int(self.pages["process"].kb_limit_edit.text() or "0")
+        except Exception:
+            kb_limit = 0
+        fmt = self.pages["layout"].get_format()
+        # KB 限制 > 0 时强制 jpg 并压缩到该体积；否则按所选输出格式
+        ext = "jpg" if fmt == "jpg" or kb_limit > 0 else "png"
+
+        digits = max(2, len(str(len(self.layout_pages))))
+        targets = [os.path.join(folder, f"排版图_{i:0{digits}d}.{ext}")
+                   for i in range(1, len(self.layout_pages) + 1)]
+
+        # 批量覆盖是破坏性的：先数一下同名文件，有就统一确认一次
+        existing = [p for p in targets if os.path.exists(p)]
+        if existing:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("覆盖同名文件")
+            box.setText(
+                f"目标文件夹里已有 {len(existing)} 个同名文件，继续导出会覆盖它们。\n"
+                "确定继续？")
+            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            box.button(QMessageBox.Yes).setText("覆盖")
+            box.button(QMessageBox.No).setText("取消")
+            if box.exec() != QMessageBox.Yes:
+                return
+
+        saved, failed = 0, []
+        for out, page in zip(targets, self.layout_pages):
+            try:
+                if ext == "jpg":
+                    save_image_to_jpeg_kb(page, out, kb_limit, dpi)
+                else:
+                    save_image_with_dpi(page, out, dpi)
+                saved += 1
+            except Exception as e:
+                failed.append(f"{os.path.basename(out)}: {e}")
+
+        self._set_status(f"已导出排版图 {saved} 张 → {folder}")
+        if failed:
+            theme.info(self, "warning", "部分导出失败",
+                       f"成功 {saved} 张，失败 {len(failed)} 张：\n"
+                       + "\n".join(failed[:5]))
+        else:
+            theme.info(self, "success", "导出完成",
+                       f"已导出 {saved} 张排版图到:\n{folder}")
+
     def on_export_batch(self):
         """把批量处理后的「标准证件照」全部导出。
 

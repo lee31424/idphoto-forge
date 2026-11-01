@@ -360,9 +360,17 @@ class LayoutLeftPane(QWidget):
         for item in self.c.ready_photos:
             h, w = item["image"].shape[:2]
             name = item["name"]
-            if len(name) > 18:
-                name = name[:18] + "…"
-            lb.addItem(f"{name}  {w}x{h}")
+            # 名字留出 2 个字符给 " · HD" 标记，避免挤掉规格文字
+            max_len = 16 if item.get("hd") is not None else 18
+            if len(name) > max_len:
+                name = name[:max_len] + "…"
+            has_hd = item.get("hd") is not None
+            text = f"{name}  {w}x{h}" + ("  · HD" if has_hd else "")
+            lb.addItem(text)
+            if has_hd:
+                # 标记含义：排版到比标准照更大的规格时，会自动使用高清版
+                lb.item(lb.count() - 1).setToolTip(
+                    "含高清版：排版到比标准照更大的规格时自动使用高清图")
 
     def get_selected_ready_idx(self):
         return self.ready_listbox.currentRow()

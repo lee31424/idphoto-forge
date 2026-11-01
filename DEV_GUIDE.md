@@ -331,6 +331,7 @@ python -c "import sys; sys.path.insert(0,'.'); import app; print('IMPORT_APP_OK'
 | 20 | 排版规格「数量」框看不到数字 | 不是宽度问题：`qfluentwidgets.SpinBox` 的编辑区恒为 1px（见 §5 坑表）。新增 `widgets.NumberField`（LineEdit + `QIntValidator`，接口兼容 SpinBox），替换排版页数量框、设置里 5 个数值框（KB/留白/横距/纵距/超时）以及规格/纸张对话框里的宽·高·张数框；删除已无用的 `theme.spinbox_qss`。实测数量框 72×33、文字区完整，截图内深色像素 34（空框为 2），数字确实画出来了 |
 | 21 | 「选项」默认值：出血 50 / 横距 20 / 纵距 20 | 三个默认值收敛到 `styles.LAYOUT_DEFAULT_BLEED / _GAP_H / _GAP_V`，`layout_view` 与 `settings_dialog` 共用，`DEFAULT_SETTINGS["layout"]` 同步（新装即 20/20/50）。注意 `settings.json` 在 `.gitignore` 里，本机已手动把旧的 1/1 改成 20/20 |
 | 22 | 排版固定用「标准照」，小规格处理后再排大规格会放大发虚 | 成品列表同时记 `hd`（仅当 hd 确实比 std 大才保留；通用构图下两者同尺寸，自动丢弃避免白占内存）。排版改用 `_pick_layout_base(src, w, h)`：标准照不需要放大就用标准照，需要放大才用高清照。实测「一寸 295×413 处理 → 大二寸 413×626 排版」锐度 16.8 → **74.5** |
+| 23 | 成品列表看不出哪张带高清；多页排版只能一页页导出 | 含高清版的条目在名称后加 `· HD`（悬停有说明）；导出卡片新增「导出全部排版图」，按页序写 `排版图_01/02/…`，复用当前输出格式 / DPI / KB 限制，遇到同名文件先弹一次覆盖确认。回归用例覆盖 PNG 与 JPEG 两种输出 |
 
 > 附：`布局页` 之前把整列最小高度顶到 766px，导致 700 高的窗口把主窗口内容区挤出屏幕（底部被裁）。现在 `LayoutView.minimumSizeHint()` 降到 68px，窗口 1000×700 时不再裁切。
 
