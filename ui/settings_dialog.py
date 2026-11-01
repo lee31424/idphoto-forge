@@ -1136,32 +1136,9 @@ class SettingsDialog(QDialog):
                            "设置已保存，软件将在 2 秒后自动重启以生效全部更改。")
             except Exception:
                 traceback.print_exc()
-            # 自动重启：延迟 2 秒让用户看到成功提示，然后重启进程
-            def _do_restart():
-                import os, sys, subprocess
-                # 用当前 python 解释器重新启动自身（保留命令行参数）
-                # 打包后 sys.argv[0] 已经是 exe 自身路径，再拼一次会变成
-                # [exe, exe]，等于把 exe 路径当作要打开的文件参数传进去；
-                # 源码运行时 sys.argv[0] 是脚本路径，必须保留。
-                _argv = sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv
-                # PDETACH 在 Windows 上让子进程脱离父进程，避免被连带杀掉
-                if sys.platform == "win32":
-                    creationflags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-                    subprocess.Popen(
-                        [sys.executable] + _argv,
-                        cwd=os.getcwd(),
-                        creationflags=creationflags,
-                        start_new_session=True,
-                    )
-                else:
-                    os.execv(sys.executable, [sys.executable] + _argv)
-                QApplication.instance().quit()
-
-            _restart_timer = QTimer(ctrl)
-            _restart_timer.setSingleShot(True)
-            _restart_timer.timeout.connect(_do_restart)
-            _restart_timer.timeout.connect(_restart_timer.deleteLater)
-            _restart_timer.start(2000)
+            # 自动重启：延迟 2 秒让用户看到成功提示，然后先正常关闭窗口
+            # （触发 closeEvent：清理缓存、保存设置、停 invoker），再拉起新进程。
+            ctrl.restart_app(delay_ms=2000)
 
         from PySide6.QtCore import QTimer
         timer = QTimer(ctrl)

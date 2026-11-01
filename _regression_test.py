@@ -439,6 +439,46 @@ def test_cache_dir_setting(win):
         shutil.rmtree(d, ignore_errors=True)
 
 
+def test_restart_closes_window_first(win):
+    """重启必须先 normal close 触发 closeEvent（清理缓存/存设置），再拉新进程。"""
+    import subprocess
+    import threading
+
+    calls = {"closed": False, "popen": 0}
+    orig_close = win.close
+    orig_popen = subprocess.Popen
+    orig_timer = threading.Timer
+
+    def fake_close():
+        calls["closed"] = True
+        orig_close()
+
+    def fake_popen(*a, **k):
+        calls["popen"] += 1
+        return object()
+
+    class FakeTimer:          # 兜底强杀定时器在测试里不启动
+        def __init__(self, *a, **k):
+            pass
+
+        def start(self):
+            pass
+
+    win.close = fake_close
+    subprocess.Popen = fake_popen
+    threading.Timer = FakeTimer
+    try:
+        win.restart_app()
+    finally:
+        win.close = orig_close
+        subprocess.Popen = orig_popen
+        threading.Timer = orig_timer
+
+    assert calls["closed"], "重启前没有关闭窗口（closeEvent 不会执行）"
+    assert calls["popen"] == 1, "没有启动新进程"
+    win.show()
+
+
 def test_process_one_applies_beauty_to_matting():
     """抠图也要过美颜，否则排版页换底色会变回素颜。"""
     from app import IDPhotoApp
@@ -827,6 +867,10 @@ def test_export_all_layouts(win, app):
 
     page = np.full((300, 200, 3), 180, dtype=np.uint8)
     win.layout_pages = [page.copy() for _ in range(3)]
+    # 不依赖用户设置：本用例先强制 PNG，结束时恢复原值
+    lv = win.pages["layout"]
+    old_fmt = lv.get_format()
+    lv.export_format_group.set("png")
     with tempfile.TemporaryDirectory() as tmpdir:
         orig = appmod.QFileDialog.getExistingDirectory
         appmod.QFileDialog.getExistingDirectory = staticmethod(
@@ -862,8 +906,6 @@ def test_export_all_layouts(win, app):
         assert "排版图_01_2.png" in files2, files2
 
     # 输出格式切到 JPEG 时，导出应为真 JPEG
-    lv = win.pages["layout"]
-    old_fmt = lv.get_format()
     lv.export_format_group.set("jpg")
     try:
         with tempfile.TemporaryDirectory() as jdir:
@@ -1076,6 +1118,7 @@ def main():
         check("默认纸张为 6 寸相纸", lambda: test_default_paper(win))
         check("旋转校正默认开启 + 下拉一致",
               lambda: test_defaults_and_dropdowns(win))
+        check("重启前先关闭窗口", lambda: test_restart_closes_window_first(win))
     finally:
         win._invoker.stop()
 

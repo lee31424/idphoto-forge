@@ -304,6 +304,50 @@ class IDPhotoApp(QMainWindow):
         self._update_model_status()
 
     # ----------------------------------------------------------
+    #  重启软件（设置保存后调用）
+    # ----------------------------------------------------------
+    def restart_app(self, delay_ms=0):
+        """先正常关闭当前窗口，再启动新进程。
+
+        旧实现直接 ``QApplication.quit()``：事件循环停了，但窗口没关，
+        ``closeEvent`` 不执行 → 缓存不清理、设置不落盘、invoker 不停，
+        旧进程还可能因为残留线程不退出（两个实例同时跑）。
+        """
+        def _restart():
+            import subprocess
+            import threading
+
+            try:
+                self.close()                    # 触发 closeEvent：清理缓存 + 落盘设置
+                QApplication.processEvents()
+            except Exception:
+                traceback.print_exc()
+
+            argv = [sys.executable] + (
+                sys.argv[1:] if getattr(sys, "frozen", False) else sys.argv)
+            try:
+                if sys.platform == "win32":
+                    flags = (subprocess.DETACHED_PROCESS
+                             | subprocess.CREATE_NEW_PROCESS_GROUP)
+                    subprocess.Popen(argv, cwd=os.getcwd(),
+                                     creationflags=flags, start_new_session=True)
+                else:
+                    os.execv(sys.executable, argv)
+            except Exception:
+                traceback.print_exc()
+
+            # 兜底：2 秒后强制退出，防止有非 daemon 线程让旧进程一直挂着
+            threading.Timer(2.0, lambda: os._exit(0)).start()
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
+
+        if delay_ms and delay_ms > 0:
+            QTimer.singleShot(int(delay_ms), _restart)
+        else:
+            _restart()
+
+    # ----------------------------------------------------------
     #  模型检查
     # ----------------------------------------------------------
     def _check_models(self, model_dir):
