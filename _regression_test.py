@@ -316,6 +316,65 @@ def test_theme_toggle(win):
     win._update_theme_button()
 
 
+def test_portrait_cache_and_hd_reuse(win):
+    """实时预览人像缓存 + 高清/标准照近似时复用美颜。"""
+    from app import IDPhotoApp
+    from photo_processor import PhotoResult
+
+    rng = np.random.default_rng(5)
+    std = np.zeros((90, 70, 4), dtype=np.uint8)
+    std[..., :3] = np.clip(120 + rng.integers(-10, 11, (90, 70, 3)), 0, 255)
+    std[..., 3] = 255
+    hd = np.clip(std.astype(np.int16) + 1, 0, 255).astype(np.uint8)   # 近似同一张
+    mat = std.copy()
+
+    params = {"size": None, "head_measure_ratio": 0.2, "head_height_ratio": 0.45,
+              "head_top_range": (0.12, 0.10), "face_confidence_threshold": 0.8,
+              "process_mode": "crop_bg", "face_alignment": False,
+              "beauty": {"smooth": 3, "whiten": 0, "correct": 3,
+                         "even": 3, "highlight": 3}}
+
+    # ---- 1) 缓存 key：结构参数变化才重新推理 ----
+    img = np.zeros((100, 80, 3), dtype=np.uint8)
+    key = win._portrait_key(0, img, params)
+    fake = PhotoResult(standard=std, hd=hd, matting=mat)
+    win._cache_portraits(key, fake)
+    assert win._get_cached_portraits(key) is fake
+    assert win._portrait_key(0, img, dict(params, head_measure_ratio=0.25)) != key, \
+        "结构参数变化后仍命中旧缓存"
+
+    # ---- 2) 传 result 时不再跑推理 ----
+    calls = []
+    orig_proc = win.photo_processor.process_id_photo
+    win.photo_processor.process_id_photo = lambda *a, **k: calls.append(1)
+    try:
+        win._process_one(img, params, (219, 142, 67), 0, result=fake)
+    finally:
+        win.photo_processor.process_id_photo = orig_proc
+    assert not calls, "传入缓存结果后仍重新推理"
+
+    # ---- 3) hd 与 std 近似 → 美颜只跑 2 次（std + matting） ----
+    counted = {"n": 0}
+    orig_beauty = IDPhotoApp._apply_beauty_bgra
+
+    def counting(cls, image, beauty):
+        counted["n"] += 1
+        return orig_beauty(image, beauty)
+
+    IDPhotoApp._apply_beauty_bgra = classmethod(counting)
+    try:
+        win._process_one(img, params, (219, 142, 67), 0, result=fake)
+        assert counted["n"] == 2, f"近似 hd 应复用美颜，实际调用 {counted['n']} 次"
+
+        counted["n"] = 0
+        hd_diff = np.clip(std.astype(np.int16) + 40, 0, 255).astype(np.uint8)
+        fake2 = PhotoResult(standard=std, hd=hd_diff, matting=mat)
+        win._process_one(img, params, (219, 142, 67), 0, result=fake2)
+        assert counted["n"] == 3, f"差异大的 hd 不应复用，实际 {counted['n']} 次"
+    finally:
+        IDPhotoApp._apply_beauty_bgra = orig_beauty
+
+
 def test_process_one_applies_beauty_to_matting():
     """抠图也要过美颜，否则排版页换底色会变回素颜。"""
     from app import IDPhotoApp
@@ -406,7 +465,8 @@ def test_live_preview_single_flight(win, app):
     state = {"running": 0, "max": 0, "calls": 0}
     lock = threading.Lock()
 
-    def fake_process(image, params, bgr, render, progress=None):
+    def fake_process(image, params, bgr, render, progress=None,
+                     result=None, portrait_key=None):
         with lock:
             state["running"] += 1
             state["calls"] += 1
@@ -927,6 +987,8 @@ def main():
         check("美颜一键开关", lambda: test_beauty_switch(win))
         check("右上角主题切换", lambda: test_theme_toggle(win))
         check("抠图也应用美颜（排版换底色）", test_process_one_applies_beauty_to_matting)
+        check("实时预览缓存 + hd/std 美颜复用",
+              lambda: test_portrait_cache_and_hd_reuse(win))
         check("批量导出 JPG 格式正确（含 KB=0）", test_batch_jpeg_format)
         check("中心渐变向量化（等价 + 提速）", test_gradient_equivalence_and_speed)
         check("实时预览单飞", lambda: test_live_preview_single_flight(win, app))
