@@ -588,8 +588,14 @@ class IDPhotoApp(QMainWindow):
         h.addWidget(self.top_nav, 0, Qt.AlignVCenter)
         h.addStretch(1)
 
-        # 设置按钮（右侧固定位置，紧凑风）
+        # 主题切换（浅色 / 深色）：右上角一键切换，立即生效并写回设置
         from qfluentwidgets import PushButton as _PB, FluentIcon as _FI
+        self.theme_btn = _PB(_FI.BRIGHTNESS.qicon(), "深色")
+        self.theme_btn.setToolTip("切换 浅色 / 深色 主题")
+        self.theme_btn.clicked.connect(self._toggle_theme)
+        h.addWidget(self.theme_btn, 0, Qt.AlignVCenter)
+
+        # 设置按钮（右侧固定位置，紧凑风）
         self.settings_btn = _PB(_FI.SETTING.qicon(), "设置")
         self.settings_btn.setToolTip("主题、外观与各项默认设置")
         self.settings_btn.clicked.connect(self._open_settings_dialog)
@@ -600,6 +606,27 @@ class IDPhotoApp(QMainWindow):
         self.open_source_btn.setToolTip("查看本项目开源地址")
         self.open_source_btn.clicked.connect(self._open_source_link)
         h.addWidget(self.open_source_btn, 0, Qt.AlignVCenter)
+
+        self._update_theme_button()
+
+    def _update_theme_button(self):
+        """按钮文字显示当前主题模式。"""
+        try:
+            dark = theme.THEME_MODE == "dark"
+            self.theme_btn.setText("深色" if dark else "浅色")
+        except Exception:
+            pass
+
+    def _toggle_theme(self):
+        """一键切换浅色/深色：应用主题并写回设置（下次启动保持）。"""
+        new_mode = "light" if theme.THEME_MODE == "dark" else "dark"
+        try:
+            self._settings.set("appearance.theme_mode", new_mode)
+            self._settings.save()
+        except Exception:
+            pass
+        theme.apply_theme(self._settings)
+        self._update_theme_button()
 
     # ----------------------------------------------------------
     #  内容区 (3 列): 左 = 队列 / 成品+排版 ｜ 中 = 预览画布 (最大) ｜ 右 = 参数面板

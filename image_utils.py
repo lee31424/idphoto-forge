@@ -233,6 +233,26 @@ def _skin_mask(image_bgr: np.ndarray) -> np.ndarray:
     return mask.astype(np.float32) / 255.0
 
 
+def _top_skin_component(mask: np.ndarray) -> np.ndarray:
+    """只保留「最上方的皮肤连通块」（脸+脖子）。
+
+    高光压制只该动脸，但暖白色衣服（白平衡偏暖）在 YCrCb 里也会落进肤色区间。
+    用几何关系兜底：人脸是画面里最靠上的大块皮肤，衣服在它下面且通常被衣领
+    断开，取包含「最上方皮肤像素」的连通块即可把衣服排除。
+    """
+    binary = (mask > 0.35).astype(np.uint8)
+    if binary.sum() < 50:
+        return mask
+    count, labels = cv2.connectedComponents(binary, connectivity=8)
+    if count <= 1:
+        return mask
+    ys, _xs = np.nonzero(binary)
+    top_label = int(labels[ys.min(), np.nonzero(binary[ys.min()])[0][0]])
+    keep = (labels == top_label).astype(np.float32)
+    keep = cv2.GaussianBlur(keep, (0, 0), 3)
+    return mask * keep
+
+
 def _apply_skin_tone(image_bgr: np.ndarray, mask: np.ndarray, strength: int) -> np.ndarray:
     """肤色矫正：按皮肤区域估计偏色，算 RGB 增益后校正整张人像。
 
@@ -343,6 +363,9 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
     if float(mask.max()) <= 0.01:
         return image_bgr
 
+    # 高光压制只针对脸：限制到「最上方皮肤连通块」，避免暖白衣服被一起压暗
+    face_mask = _top_skin_component(mask) if highlight > 0 else mask
+
     # 先均匀色斑，再校色相，最后磨皮/提亮
     if even > 0:
         image_bgr = _apply_skin_even(image_bgr, mask, even)
@@ -362,6 +385,7 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
     x1 = min(width, int(xs.max()) + 1 + pad)
     roi = image_bgr[y0:y1, x0:x1]
     roi_mask = mask[y0:y1, x0:x1]
+    roi_face = face_mask[y0:y1, x0:x1]
 
     result = roi.astype(np.float32)
 
@@ -386,7 +410,7 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
         lab = cv2.cvtColor(np.clip(result, 0, 255).astype(np.uint8),
                            cv2.COLOR_BGR2LAB).astype(np.float32)
         lightness = lab[:, :, 0]
-        sel = roi_mask > 0.5
+        sel = roi_face > 0.5
         if int(sel.sum()) >= 50:
             # 以「皮肤均值 + 0.8σ」为高光起点：只压明显高出正常肤色的反光，
             # 不会把整张脸压暗；用均值/标准差比高分位更抗“大面积亮区”。
@@ -396,7 +420,7 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
             w = np.clip((lightness - cap) / 30.0, 0.0, 1.0)   # 30 灰阶平滑过渡
             w = cv2.GaussianBlur(w, (0, 0), 3.0)
             k = min(max(highlight, 0), 10) / 10.0 * 0.9
-            lab[:, :, 0] = lightness - k * (roi_mask * w) * (lightness - cap)
+            lab[:, :, 0] = lightness - k * (roi_face * w) * (lightness - cap)
             result = cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8),
                                   cv2.COLOR_LAB2BGR).astype(np.float32)
 

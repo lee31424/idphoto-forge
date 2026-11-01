@@ -276,6 +276,46 @@ def test_beauty_switch(win):
     pv._reset_beauty()
 
 
+def test_highlight_ignores_clothes():
+    """高光压制只动脸：暖白色衣服（会被 YCrCb 认成肤色）不能被压暗。"""
+    from app import IDPhotoApp
+
+    img = np.zeros((300, 200, 3), dtype=np.uint8)
+    img[20:120, 40:160] = (63, 97, 134)       # 脸
+    img[40:100, 70:130] = (200, 225, 245)     # 脸上的油光
+    img[160:290, 20:180] = (220, 235, 245)    # 暖白衣服
+    alpha = np.zeros((300, 200), dtype=np.uint8)
+    alpha[20:120, 40:160] = 255
+    alpha[160:290, 20:180] = 255
+    bgra = np.dstack((img, alpha))
+
+    def lab_l(a):
+        return cv2.cvtColor(a[..., :3], cv2.COLOR_BGR2LAB)[..., 0].astype(np.float32)
+
+    before = lab_l(bgra)
+    out = IDPhotoApp._apply_beauty_bgra(
+        bgra, {"smooth": 0, "whiten": 0, "correct": 0, "even": 0, "highlight": 10})
+    after = lab_l(out)
+
+    face_drop = float(before[45:95, 75:125].mean() - after[45:95, 75:125].mean())
+    clothes_drop = float(before[170:280, 30:170].mean() - after[170:280, 30:170].mean())
+    assert face_drop > 15, f"脸上高光没压下来（{face_drop:.1f}）"
+    assert abs(clothes_drop) < 1.0, f"衣服被误压（{clothes_drop:.1f}）"
+
+
+def test_theme_toggle(win):
+    """右上角主题切换：点击后模式变化并写回设置。"""
+    from ui import theme
+
+    before = theme.THEME_MODE
+    win.theme_btn.click()
+    assert theme.THEME_MODE != before, "点击后主题没变"
+    assert win._settings.get("appearance.theme_mode") == theme.THEME_MODE
+    win.theme_btn.click()
+    assert theme.THEME_MODE == before, "再点一次没有切回"
+    win._update_theme_button()
+
+
 def test_process_one_applies_beauty_to_matting():
     """抠图也要过美颜，否则排版页换底色会变回素颜。"""
     from app import IDPhotoApp
@@ -883,7 +923,9 @@ def main():
         check("肤色矫正（偏黄拉回正常）", test_skin_tone_correction)
         check("颜色均衡（压平色斑）", test_skin_even)
         check("高光压制（亮斑变暗）", test_highlight_suppression)
+        check("高光压制不碰衣服", test_highlight_ignores_clothes)
         check("美颜一键开关", lambda: test_beauty_switch(win))
+        check("右上角主题切换", lambda: test_theme_toggle(win))
         check("抠图也应用美颜（排版换底色）", test_process_one_applies_beauty_to_matting)
         check("批量导出 JPG 格式正确（含 KB=0）", test_batch_jpeg_format)
         check("中心渐变向量化（等价 + 提速）", test_gradient_equivalence_and_speed)
