@@ -511,6 +511,40 @@ def test_export_all_layouts(win, app):
     win.layout_pages = []
 
 
+def test_export_part_fallback(win):
+    """若 .part 写入被拦截，应自动回退为直接写目标文件。"""
+    import app as appmod
+
+    page = np.full((120, 80, 3), 100, dtype=np.uint8)
+    with tempfile.TemporaryDirectory() as td:
+        out = os.path.join(td, "排版图_01.png")
+        orig = appmod.save_image_with_dpi
+
+        def flaky(img, path, dpi=300):
+            if str(path).endswith(".part"):
+                raise PermissionError("模拟安全软件拦截 .part")
+            return orig(img, path, dpi)
+
+        appmod.save_image_with_dpi = flaky
+        try:
+            win._save_layout_page(page, out, "png", 0, 300)
+        finally:
+            appmod.save_image_with_dpi = orig
+        assert os.path.isfile(out) and os.path.getsize(out) > 0, "回退写盘失败"
+
+        # 两条路都失败时必须抛出带原因的异常
+        appmod.save_image_with_dpi = lambda *a, **k: (_ for _ in ()).throw(
+            PermissionError("全部被拦截"))
+        try:
+            try:
+                win._save_layout_page(page, out, "png", 0, 300)
+                raise AssertionError("应当抛异常")
+            except IOError as e:
+                assert "全部被拦截" in str(e), str(e)
+        finally:
+            appmod.save_image_with_dpi = orig
+
+
 def test_generate_layout_async(win, app):
     """「排版」按钮走后台线程：结束后 busy 复位、页面已交给界面。"""
     std = np.full((413, 295, 4), 120, dtype=np.uint8)
@@ -590,6 +624,7 @@ def main():
         check("成品列表 HD 标记", lambda: test_ready_list_hd_marker(win))
         check("批量导出排版图（多页）", lambda: test_export_all_layouts(win, app))
         check("排版后台生成（不卡 UI）", lambda: test_generate_layout_async(win, app))
+        check("导出 .part 失败自动回退", lambda: test_export_part_fallback(win))
         check("默认纸张为 6 寸相纸", lambda: test_default_paper(win))
         check("旋转校正默认开启 + 下拉一致",
               lambda: test_defaults_and_dropdowns(win))

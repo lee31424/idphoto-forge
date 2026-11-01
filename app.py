@@ -12,6 +12,7 @@ UI 与代码分离：
 """
 import os
 import sys
+import time
 import threading
 import queue
 import functools
@@ -2094,6 +2095,19 @@ class IDPhotoApp(QMainWindow):
         if not folder:
             return
 
+        # 预检：先把"目录能不能写"查清楚，避免跑到一半才发现权限/磁盘问题
+        probe = os.path.join(folder, ".idphoto_write_test")
+        try:
+            with open(probe, "wb") as f:
+                f.write(b"ok")
+            os.remove(probe)
+        except Exception as e:  # noqa: BLE001
+            self._log_export(f"预检失败 folder={folder!r} {type(e).__name__}: {e}")
+            theme.info(self, "error", "文件夹不可写",
+                       f"{folder}\n\n{type(e).__name__}: {e}\n\n"
+                       "请换一个有写入权限的文件夹（或检查磁盘是否只读/已满）。")
+            return
+
         try:
             dpi = int(self.pages["process"].dpi_combo.currentText())
         except Exception:
@@ -2115,35 +2129,73 @@ class IDPhotoApp(QMainWindow):
         total = len(pages)
         self._set_status(f"正在导出排版图 0/{total}…")
         QApplication.setOverrideCursor(Qt.WaitCursor)
+        self._log_export(f"开始导出 {total} 页 → {folder!r} ext={ext} dpi={dpi} kb={kb_limit}")
 
         def _worker():
             saved, failed = 0, []
             for i, (out, page) in enumerate(zip(targets, pages), 1):
-                tmp_out = out + ".part"
                 try:
-                    # 先写 .part 再原子改名：中途被关进程也不会留下"半张图"
-                    if ext == "jpg":
-                        save_image_to_jpeg_kb(page, tmp_out, kb_limit, dpi)
-                    else:
-                        save_image_with_dpi(page, tmp_out, dpi)
-                    # 落盘校验：写入接口不报错但文件不存在/为空的坑要拦住
-                    if not os.path.isfile(tmp_out) or os.path.getsize(tmp_out) <= 0:
-                        raise IOError("文件没有写出来（可能被安全软件拦截）")
-                    os.replace(tmp_out, out)
+                    self._save_layout_page(page, out, ext, kb_limit, dpi)
                     saved += 1
                 except Exception as e:  # noqa: BLE001 - 逐页收集，不中断整批
                     failed.append(f"{os.path.basename(out)}: {e}")
-                    try:
-                        if os.path.exists(tmp_out):
-                            os.remove(tmp_out)
-                    except OSError:
-                        pass
+                    self._log_export(
+                        f"第 {i} 页失败 out={out!r} "
+                        f"exists={os.path.exists(out)} "
+                        f"folder_isdir={os.path.isdir(folder)} "
+                        f"{type(e).__name__}: {e}")
                 self._safe_after(0, lambda i=i: self._set_status(
                     f"正在导出排版图 {i}/{total}…"))
+            self._log_export(f"导出结束 saved={saved} failed={len(failed)}")
             self._safe_after(0, lambda: self._on_export_layouts_done(
                 saved, failed, folder))
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    @staticmethod
+    def _save_layout_page(page, out, ext, kb_limit, dpi):
+        """写一页排版图。
+
+        先用 `out.part` 写再原子改名（中途关进程不会留半张图）；
+        如果 ".part 写入后校验失败"（个别安全软件对未知扩展名会静默拦截），
+        再退一步直接写目标文件。两条路都失败才抛错，错误信息带真实原因。
+        """
+        tmp = out + ".part"
+        errors = []
+        for target in (tmp, out):
+            try:
+                if ext == "jpg":
+                    save_image_to_jpeg_kb(page, target, kb_limit, dpi)
+                else:
+                    save_image_with_dpi(page, target, dpi)
+                if not os.path.isfile(target) or os.path.getsize(target) <= 0:
+                    raise IOError("写入后文件不存在或为空")
+                if target == tmp:
+                    os.replace(tmp, out)
+                return
+            except Exception as e:  # noqa: BLE001 - 记录后尝试下一种写法
+                errors.append(f"{os.path.basename(target)}: {type(e).__name__}: {e}")
+                try:
+                    if target != out and os.path.exists(target):
+                        os.remove(target)
+                except OSError:
+                    pass
+        raise IOError("；".join(errors))
+
+    @staticmethod
+    def _export_log_path():
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+        return os.path.join(base, "证件照制作工具", "export_debug.log")
+
+    @classmethod
+    def _log_export(cls, msg):
+        try:
+            path = cls._export_log_path()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}\n")
+        except Exception:
+            pass
 
     @staticmethod
     def _unique_export_path(folder, stem, ext):
@@ -2158,17 +2210,20 @@ class IDPhotoApp(QMainWindow):
     def _on_export_layouts_done(self, saved, failed, folder):
         self._export_busy = False
         QApplication.restoreOverrideCursor()
+        log_path = self._export_log_path()
         if saved == 0:
             self._set_status("排版图导出失败")
             detail = "\n".join(failed[:5]) if failed else "未知原因"
             theme.info(self, "error", "导出失败",
-                       f"没有写出任何文件：\n{detail}\n\n目标文件夹：{folder}")
+                       f"没有写出任何文件：\n{detail}\n\n目标文件夹：{folder}\n"
+                       f"排查日志：{log_path}")
             return
         self._set_status(f"已导出排版图 {saved} 张 → {folder}")
         if failed:
             theme.info(self, "warning", "部分导出失败",
                        f"成功 {saved} 张，失败 {len(failed)} 张：\n"
-                       + "\n".join(failed[:5]) + f"\n\n文件夹：{folder}")
+                       + "\n".join(failed[:5]) + f"\n\n文件夹：{folder}\n"
+                       f"排查日志：{log_path}")
         else:
             theme.info(self, "success", "导出完成",
                        f"已导出 {saved} 张排版图到:\n{folder}")
