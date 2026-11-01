@@ -495,6 +495,19 @@ def test_export_all_layouts(win, app):
     win.layout_pages = []
 
 
+def test_default_paper(win):
+    """排版默认纸张是 6 寸相纸（152×102mm），画布 1795×1205 @300DPI。"""
+    import styles
+
+    assert styles.DEFAULT_PAPER == "6寸相纸", styles.DEFAULT_PAPER
+    assert styles.PAPER_PRESETS[0][0] == styles.DEFAULT_PAPER, \
+        "DEFAULT_PAPER 必须是 PAPER_PRESETS 里存在的项"
+
+    lv = win.pages["layout"]
+    assert lv.paper_combo.currentText() == "6寸相纸", lv.paper_combo.currentText()
+    assert lv.get_paper_px() == (1795, 1205), lv.get_paper_px()
+
+
 def test_defaults_and_dropdowns(win):
     """人脸旋转校正默认开启；两个页面下拉里的规格一致。"""
     pv = win.pages["process"]
@@ -540,6 +553,7 @@ def main():
         check("排版按规格自动选高清图", lambda: test_layout_picks_hd_by_target(win))
         check("成品列表 HD 标记", lambda: test_ready_list_hd_marker(win))
         check("批量导出排版图（多页）", lambda: test_export_all_layouts(win, app))
+        check("默认纸张为 6 寸相纸", lambda: test_default_paper(win))
         check("旋转校正默认开启 + 下拉一致",
               lambda: test_defaults_and_dropdowns(win))
     finally:

@@ -332,6 +332,7 @@ python -c "import sys; sys.path.insert(0,'.'); import app; print('IMPORT_APP_OK'
 | 21 | 「选项」默认值：出血 50 / 横距 20 / 纵距 20 | 三个默认值收敛到 `styles.LAYOUT_DEFAULT_BLEED / _GAP_H / _GAP_V`，`layout_view` 与 `settings_dialog` 共用，`DEFAULT_SETTINGS["layout"]` 同步（新装即 20/20/50）。注意 `settings.json` 在 `.gitignore` 里，本机已手动把旧的 1/1 改成 20/20 |
 | 22 | 排版固定用「标准照」，小规格处理后再排大规格会放大发虚 | 成品列表同时记 `hd`（仅当 hd 确实比 std 大才保留；通用构图下两者同尺寸，自动丢弃避免白占内存）。排版改用 `_pick_layout_base(src, w, h)`：标准照不需要放大就用标准照，需要放大才用高清照。实测「一寸 295×413 处理 → 大二寸 413×626 排版」锐度 16.8 → **74.5** |
 | 23 | 成品列表看不出哪张带高清；多页排版只能一页页导出 | 含高清版的条目在名称后加 `· HD`（悬停有说明）；导出卡片新增「导出全部排版图」，按页序写 `排版图_01/02/…`，复用当前输出格式 / DPI / KB 限制，遇到同名文件先弹一次覆盖确认。回归用例覆盖 PNG 与 JPEG 两种输出 |
+| 24 | 排版纸张默认是 A4 | 新增 `styles.DEFAULT_PAPER = "6寸相纸"`（152×102mm，冲印最常用），`layout_view._load_custom_paper_presets` 用它预选；默认画布 1795×1205。方向单选补了提示：「纵向 = 按纸张定义方向，横向 = 旋转 90°」——6 寸本身就是横向，所以默认「纵向」得到的正是常规 6 寸画布 |
 
 > 附：`布局页` 之前把整列最小高度顶到 766px，导致 700 高的窗口把主窗口内容区挤出屏幕（底部被裁）。现在 `LayoutView.minimumSizeHint()` 降到 68px，窗口 1000×700 时不再裁切。
 

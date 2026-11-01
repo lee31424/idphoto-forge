@@ -14,7 +14,7 @@ from qfluentwidgets import (
 
 from . import theme, widgets
 from styles import (PAPER_PRESETS, PRINT_DPI, LAYOUT_DEFAULT_BLEED,
-                    LAYOUT_DEFAULT_GAP_H, LAYOUT_DEFAULT_GAP_V)
+                    LAYOUT_DEFAULT_GAP_H, LAYOUT_DEFAULT_GAP_V, DEFAULT_PAPER)
 
 # 导出区大按钮样式（调用 theme 的主题感知函数，跟随浅/深模式与强调色）
 
@@ -77,6 +77,10 @@ class LayoutView(QWidget):
             [("portrait", "纵向"), ("landscape", "横向")],
             default="portrait",
             on_change=lambda _: self._on_paper_changed())
+        # 预设纸张按各自的"定义方向"给出（6寸=152×102 本身就是横向），
+        # 「纵向」= 按定义方向输出，「横向」= 旋转 90°，避免误以为是绝对方向。
+        self.orientation_group.setToolTip(
+            "纵向：按所选纸张的定义方向输出；横向：把纸张旋转 90°")
         card.addWidget(self.orientation_group)
 
         # 打印机行：标签 + Combo + 属性按钮。Combo 拉满 stretch，属性按钮紧凑
@@ -260,7 +264,7 @@ class LayoutView(QWidget):
         return getattr(self.c, "_settings", None)
 
     def _load_custom_paper_presets(self):
-        """从 settings 读自定义纸张并重建下拉（默认选中 A4）。"""
+        """从 settings 读自定义纸张并重建下拉（默认选中 styles.DEFAULT_PAPER）。"""
         raw = None
         s = self._settings()
         if s is not None:
@@ -269,7 +273,7 @@ class LayoutView(QWidget):
             except Exception:
                 raw = None
         self._custom_paper_presets = self._normalize_paper(raw)
-        self._reload_paper_combo(select="A4")
+        self._reload_paper_combo(select=DEFAULT_PAPER)
 
     @staticmethod
     def _normalize_paper(raw):
