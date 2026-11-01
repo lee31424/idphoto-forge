@@ -132,7 +132,9 @@ class LayoutLeftPane(QWidget):
         for _name, _count in (("自用2", 8), ("自用1", 9)):
             quick_row.addWidget(theme.compact_secondary_button(
                 f"{_name} ×{_count}", None,
-                lambda n=_name, c=_count: self._quick_add_mixed(n, c)))
+                # ⚠️ clicked 会附带 checked(bool) 位置参数：第一个形参必须显式接住，
+                # 否则 False 会被当成规格名（曾导致"找不到规格「False」"）。
+                lambda checked=False, n=_name, c=_count: self._quick_add_mixed(n, c)))
         quick_row.addStretch(1)
         card.addLayout(quick_row)
 

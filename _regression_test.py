@@ -546,7 +546,7 @@ def test_export_part_fallback(win):
 
 
 def test_quick_add_shortcuts(win):
-    """排版规格的两个快捷项：自用2×8、自用1×9，背景默认。"""
+    """排版规格的两个快捷项：点按钮应直接加入清单（自用2×8 / 自用1×9）。"""
     from PySide6.QtWidgets import QPushButton
 
     llp = win.layout_pane
@@ -554,17 +554,19 @@ def test_quick_add_shortcuts(win):
     llp.mixed_listbox.clear()
 
     base = llp.mixed_listbox.count()
-    llp._quick_add_mixed("自用2", 8)
+    texts = [b.text() for b in llp.findChildren(QPushButton)]
+    btn2 = next(b for b in llp.findChildren(QPushButton) if "自用2 ×8" in b.text())
+    btn1 = next(b for b in llp.findChildren(QPushButton) if "自用1 ×9" in b.text())
+    assert any("导入文件夹" in t for t in texts), "成品卡片缺少文件夹导入按钮"
+
+    # 用 click() 走真实信号路径（clicked 会附带 checked=False，容易踩参数坑）
+    btn2.click()
     assert llp.mixed_items[-1] == ("自用2", 378, 496, 8, ""), llp.mixed_items[-1]
-    llp._quick_add_mixed("自用1", 9)
+    btn1.click()
     assert llp.mixed_items[-1] == ("自用1", 319, 425, 9, ""), llp.mixed_items[-1]
     assert llp.mixed_listbox.count() == base + 2
-
-    # 两个快捷按钮要真的在界面上
-    texts = [b.text() for b in llp.findChildren(QPushButton)]
-    assert any("自用2 ×8" in t for t in texts), texts
-    assert any("自用1 ×9" in t for t in texts), texts
-    assert any("导入文件夹" in t for t in texts), "成品卡片缺少文件夹导入按钮"
+    assert llp.mixed_listbox.item(0).text().startswith("自用2"), \
+        llp.mixed_listbox.item(0).text()
 
     llp.mixed_items = []
     llp.mixed_listbox.clear()
