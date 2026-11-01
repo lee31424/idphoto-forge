@@ -375,6 +375,46 @@ def test_portrait_cache_and_hd_reuse(win):
         IDPhotoApp._apply_beauty_bgra = orig_beauty
 
 
+def test_result_store_disk(win):
+    """处理结果落盘：内存只留缩略图，std/hd/matting 按需读回。"""
+    from core.result_store import ResultStore, StoredResult, LazyImage
+
+    store = ResultStore(max_cached=2)
+    try:
+        std = np.full((80, 60, 3), 120, dtype=np.uint8)
+        hd = np.full((120, 90, 3), 130, dtype=np.uint8)
+        mat = np.zeros((100, 70, 4), dtype=np.uint8)
+        mat[..., :3] = 150
+        mat[..., 3] = 255
+        thumb = np.full((20, 15, 3), 90, dtype=np.uint8)
+
+        paths = store.put(7, std, hd, mat)
+        assert set(paths) == {"std", "hd", "matting"}
+        res = StoredResult(store, paths, thumb=thumb,
+                           shapes={"std": std.shape, "hd": hd.shape})
+        assert np.array_equal(res.get("std"), std)
+        assert res.get("matting").shape[2] == 4, "抠图的 alpha 丢了"
+        assert res.get("thumb").shape == (20, 15, 3)
+
+        ref = LazyImage(store, paths["std"], shape=std.shape)
+        assert ref.shape == std.shape, "LazyImage 应该直接给出尺寸"
+        assert ref.load() is not None
+
+        # 清空后文件应消失
+        first = paths["std"]
+        store.clear()
+        assert not os.path.exists(first)
+
+        # app 层的 _store_result：写盘 + 缩略图
+        res2 = win._store_result(3, std, hd, mat)
+        assert sorted(res2.paths()) == ["hd", "matting", "std"]
+        assert np.array_equal(res2.get("std"), std)
+        assert res2.get("thumb") is not None
+        assert win.processed_results[3] is res2
+    finally:
+        win.processed_results.pop(3, None)
+
+
 def test_process_one_applies_beauty_to_matting():
     """抠图也要过美颜，否则排版页换底色会变回素颜。"""
     from app import IDPhotoApp
@@ -989,6 +1029,7 @@ def main():
         check("抠图也应用美颜（排版换底色）", test_process_one_applies_beauty_to_matting)
         check("实时预览缓存 + hd/std 美颜复用",
               lambda: test_portrait_cache_and_hd_reuse(win))
+        check("结果落盘 + 缩略图", lambda: test_result_store_disk(win))
         check("批量导出 JPG 格式正确（含 KB=0）", test_batch_jpeg_format)
         check("中心渐变向量化（等价 + 提速）", test_gradient_equivalence_and_speed)
         check("实时预览单飞", lambda: test_live_preview_single_flight(win, app))

@@ -235,6 +235,11 @@ class IDPhotoApp(QMainWindow):
         # 只重算「美颜 + 换底 + 水印」，把一次预览从 ~1.4s 降到 ~0.7s。
         self._portrait_cache = {}            # key -> PhotoResult（最多 2 条）
         self._portrait_lock = threading.Lock()
+        # 结果落盘：processed_results 里只存路径 + 缩略图，图像按需读盘。
+        # 3000 张 × 18MB ≈ 54GB，全留内存会直接 OOM。
+        from core.result_store import ResultStore
+        ResultStore.cleanup_stale()
+        self._result_store = ResultStore()
         self._imported_paths = set()    # 已导入路径（规范化），O(1) 去重
         self._import_thread = None      # 后台导入线程
         # 原图 LRU 缓存：只保留最近用到的几张全分辨率原图。
@@ -1359,8 +1364,31 @@ class IDPhotoApp(QMainWindow):
     def _apply_live_result(self, std, hd, mat, idx):
         self.standard_image, self.hd_image, self.matting_image = std, hd, mat
         if 0 <= idx < len(self.batch_images):
+            # 实时预览不落盘：只有当前这一张，内存占用可忽略，
+            # 拖滑块时也不会反复写 PNG（批量结果才需要落盘）
             self.processed_results[idx] = {"std": std, "hd": hd, "matting": mat}
         self._refresh_right_previews()
+
+    def _store_result(self, idx, std, hd, matting):
+        """把处理结果写盘，内存只留缩略图（3000 张时是必需项）。"""
+        from core.result_store import StoredResult
+
+        paths = self._result_store.put(idx, std, hd, matting)
+        thumb = None
+        if std is not None:
+            try:
+                h, w = std.shape[:2]
+                scale = 240.0 / max(h, w, 1)
+                thumb = cv2.resize(std, (max(1, int(w * scale)), max(1, int(h * scale))),
+                                   interpolation=cv2.INTER_AREA)
+            except Exception:
+                thumb = std
+        res = StoredResult(self._result_store, paths, thumb=thumb,
+                           shapes={k: v.shape for k, v in
+                                   (("std", std), ("hd", hd), ("matting", matting))
+                                   if v is not None})
+        self.processed_results[idx] = res
+        return res
 
     def _start_processing(self, status_text):
         self.processing = True
@@ -1386,7 +1414,7 @@ class IDPhotoApp(QMainWindow):
         跨线程操作 QWidget 会死锁或崩溃。
         """
         total = len(self.batch_images)
-        results = {}
+        done = []      # 本次成功处理的队列下标（不再缓存图像数组，结果已落盘）
         failures = []  # 收集失败项，处理完统一弹窗
         for idx, item in enumerate(self.batch_images):
             if self._stop_batch:
@@ -1415,25 +1443,26 @@ class IDPhotoApp(QMainWindow):
                 std, hd, matting = self._process_one(
                     self._get_full_image(idx), params, bgr_color, render_mode,
                     progress=_item_progress)
-                results[idx] = (std, hd, matting)
+                # 立即落盘并释放数组：3000 张时这里决定内存能不能撑住
+                res = self._store_result(idx, std, hd, matting)
+                del std, hd, matting
+                done.append(idx)
                 self._safe_after(0, lambda i=idx: self.queue_pane.set_queue_status(i, "✓"))
                 self._safe_after(0, lambda i=idx: self.queue_pane.set_item_progress_done(i))
                 # 路径在这里取好再传出去：lambda 里的 i 等到主线程执行时队列可能
                 # 已被用户删改，届时 self.batch_images[i] 可能越界或指向别的图。
                 src_path = (self.batch_images[idx].get("path")
                             if 0 <= idx < len(self.batch_images) else None)
-                self._safe_after(0, lambda s=std, m=matting, p=src_path, h=hd:
-                                 self._auto_import_ready(s, p, matting=m, hd=h))
+                self._safe_after(0, lambda r=res, p=src_path:
+                                 self._auto_import_ready(r, p))
             except Exception as e:
                 failures.append((item.get("name", "?"), str(e)))
                 self._safe_after(0, lambda i=idx: self.queue_pane.reset_item_progress(i))
-        if results:
-            for i, (std, hd, matting) in results.items():
-                self.processed_results[i] = {"std": std, "hd": hd, "matting": matting}
+        if done:
             self._safe_after(0, lambda: self._refresh_result_thumbnails())
             # 批量处理完后自动选中第一个结果并预览（受设置开关控制）
             if self._settings.get("ui.auto_select_first_after_batch", True):
-                first_idx = min(results.keys())
+                first_idx = min(done)
                 self._safe_after(0, lambda i=first_idx: self._on_gallery_select(i))
         stopped = self._stop_batch
         self._safe_after(0, lambda: self._on_batch_done(failures, stopped))
@@ -1627,13 +1656,12 @@ class IDPhotoApp(QMainWindow):
         self.matting_image = matting_img
         if idx is None:
             idx = self.current_image_idx
+        stored = None
         if 0 <= idx < len(self.batch_images):
-            self.processed_results[idx] = {
-                "std": std_img, "hd": hd_img, "matting": matting_img}
+            stored = self._store_result(idx, std_img, hd_img, matting_img)
         self._auto_import_ready(
-            std_img,
-            self.batch_images[idx].get("path") if 0 <= idx < len(self.batch_images) else None,
-            matting=matting_img, hd=hd_img)
+            stored if stored is not None else std_img,
+            self.batch_images[idx].get("path") if 0 <= idx < len(self.batch_images) else None)
         self._refresh_result_thumbnails()
         # 不再强制切换视图，保持用户当前选择的模式（默认"自动"）
         self._refresh_right_previews()
@@ -1645,18 +1673,25 @@ class IDPhotoApp(QMainWindow):
     def _auto_import_ready(self, image, src_path, matting=None, hd=None):
         """把处理结果写进「成品证件照」列表（排版的数据源）。
 
-        image 是标准照；hd 是高清照，只有**确实比标准照大**时才保留——
-        默认「通用构图」下 hd 与 std 同尺寸，存下来只会白占内存（每张约 5MB），
-        此时按 None 处理；排版需要放大时才会用到它（见 _pick_layout_base）。
+        image 可以是 ndarray（单张处理），也可以是 StoredResult（批量处理，
+        结果已落盘）——后者只存路径引用，3000 张时不会把内存撑爆。
         """
+        from core.result_store import StoredResult, LazyImage
+
         if image is None:
             return
-        if hd is not None:
-            try:
-                if hd.shape[0] <= image.shape[0] and hd.shape[1] <= image.shape[1]:
+        if isinstance(image, StoredResult):
+            ref_std = self._lazy_ref(image, "std")
+            ref_hd = self._lazy_ref(image, "hd")
+            ref_mat = self._lazy_ref(image, "matting")
+            image, hd, matting = ref_std, ref_hd, ref_mat
+        else:
+            if hd is not None:
+                try:
+                    if hd.shape[0] <= image.shape[0] and hd.shape[1] <= image.shape[1]:
+                        hd = None
+                except Exception:
                     hd = None
-            except Exception:
-                hd = None
         if src_path:
             norm = os.path.normcase(os.path.normpath(src_path))
             for it in self.ready_photos:
@@ -1677,16 +1712,37 @@ class IDPhotoApp(QMainWindow):
                 "matting": matting, "hd": hd})
         self.layout_pane.refresh_ready_list()
 
+    def _lazy_ref(self, stored, kind):
+        """StoredResult 的某一类图 → 延迟加载引用（路径不存在则 None）。"""
+        from core.result_store import LazyImage
+        path = stored.paths().get(kind)
+        if not path:
+            return None
+        return LazyImage(self._result_store, path, shape=stored.shapes.get(kind))
+
+    @staticmethod
+    def _resolve_ready_image(value):
+        """把 ready_photos 里的 ndarray / LazyImage 统一解成 ndarray。"""
+        from core.result_store import LazyImage, StoredResult
+        if isinstance(value, LazyImage):
+            return value.load()
+        if isinstance(value, StoredResult):
+            return value.get("std")
+        return value
+
     # ----------------------------------------------------------
     #  结果缩略图 / 画廊
     # ----------------------------------------------------------
     def _refresh_result_thumbnails(self):
         keys = sorted(self.processed_results.keys())
         self._result_thumb_indices = keys
-        items = [{
-            "name": self._name_at(idx),
-            "image": self.processed_results[idx].get("std"),
-        } for idx in keys]
+        items = []
+        for idx in keys:
+            res = self.processed_results[idx]
+            img = res.get("thumb")
+            if img is None:
+                img = res.get("std")
+            items.append({"name": self._name_at(idx), "image": img})
         self.right_thumb.refresh_results(
             [(it["name"], it["image"]) for it in items])
 
@@ -1744,14 +1800,22 @@ class IDPhotoApp(QMainWindow):
         return item.get("name") or ""
 
     def _collect_layout_source_photos(self):
-        """排版数据源：每张成品带上标准照 / 高清照 / 抠图 + 页角标注。"""
+        """排版数据源：每张成品带上标准照 / 高清照 / 抠图 + 页角标注。
+
+        批量处理时这些是 LazyImage（路径引用），生成排版时才读盘；
+        单张处理时是 ndarray，直接使用。
+        """
         photos = []
         for it in self.ready_photos:
-            if it.get("image") is not None:
-                photos.append({"image": it["image"],
-                               "hd": it.get("hd"),
-                               "matting": it.get("matting"),
-                               "label": self._source_display_label(it)})
+            if it.get("image") is None:
+                continue
+            img = self._resolve_ready_image(it.get("image"))
+            if img is None:
+                continue
+            photos.append({"image": img,
+                           "hd": self._resolve_ready_image(it.get("hd")),
+                           "matting": self._resolve_ready_image(it.get("matting")),
+                           "label": self._source_display_label(it)})
         return photos
 
     @staticmethod
@@ -2715,7 +2779,8 @@ class IDPhotoApp(QMainWindow):
         if (page_id == "layout" and self.preview_view == "auto"
                 and 0 <= self.selected_ready_idx < len(self.ready_photos)):
             placeholder = "成品证件照"
-            image = self.ready_photos[self.selected_ready_idx].get("image")
+            image = self._resolve_ready_image(
+                self.ready_photos[self.selected_ready_idx].get("image"))
         elif view == "original":
             placeholder = "导入后显示原图"
             if 0 <= self.current_image_idx < len(self.batch_images):
@@ -2748,6 +2813,11 @@ class IDPhotoApp(QMainWindow):
         self.processing = False
         try:
             self._invoker.stop()
+        except Exception:
+            pass
+        # 清理本次运行的结果临时文件（PNG 落盘目录）
+        try:
+            self._result_store.clear()
         except Exception:
             pass
         # 落盘设置
