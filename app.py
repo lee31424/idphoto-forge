@@ -1502,10 +1502,10 @@ class IDPhotoApp(QMainWindow):
 
     @staticmethod
     def _beauty_active(beauty):
-        """美颜参数是否有任何一项非 0（全 0 时跳过，省掉整图 float 运算）。"""
+        """美颜参数是否有任何一项非 0（全 0 时跳过，省掉整图运算）。"""
         if not beauty:
             return False
-        for k in ("whiten", "brightness", "contrast", "saturation", "sharpen"):
+        for k in ("smooth", "whiten"):
             try:
                 if float(beauty.get(k, 0) or 0) != 0:
                     return True
@@ -1515,16 +1515,17 @@ class IDPhotoApp(QMainWindow):
 
     @classmethod
     def _apply_beauty_bgra(cls, image, beauty):
-        """对 BGRA 抠图的 RGB 通道做美颜，alpha 原样保留。
+        """对 BGRA 抠图做磨皮/美白，alpha 原样保留。
 
-        只在人像像素上做，合成背景时由 alpha 自然过渡；背景色不受影响。
+        效果只落在「皮肤 ∩ 人像」上：肤色遮罩限制区域，alpha 排除透明背景，
+        所以合成后的底色不会被美颜带偏。
         """
         if image is None or getattr(image, "ndim", 0) != 3 or image.shape[2] != 4:
             return image
         if not cls._beauty_active(beauty):
             return image
         from image_utils import apply_beauty
-        rgb_out = apply_beauty(image[:, :, :3], beauty)
+        rgb_out = apply_beauty(image[:, :, :3], beauty, alpha=image[:, :, 3])
         return np.dstack((rgb_out, image[:, :, 3]))
 
     @staticmethod

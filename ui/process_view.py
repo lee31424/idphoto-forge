@@ -19,6 +19,7 @@ from . import widgets
 from styles import (
     RENDER_MODES, MATTING_MODELS, FACE_MODELS, PRESET_COLORS, PROCESS_MODES,
     DEFAULT_BG_COLOR, DEFAULT_WATERMARK_COLOR, PRESET_SIZES, PRINT_DPI,
+    BEAUTY_MAX, BEAUTY_DEFAULT_SMOOTH, BEAUTY_DEFAULT_WHITEN,
 )
 from color_utils import hex_to_rgb_tuple
 
@@ -316,20 +317,14 @@ class ProcessView(QWidget):
         v.setSpacing(12)
 
         beauty_card = widgets.CardSection("美颜参数")
-        self.whiten_row = widgets.SliderRow("美白", 0, 15, 1, 0, 0)
+        # 只保留「磨皮 + 美白」：效果都只作用在皮肤上（肤色遮罩 + 人像 alpha），
+        # 不再提供亮度/对比/饱和/锐化——那些属于调色，会把底色和衣服一起改掉。
+        self.smooth_row = widgets.SliderRow(
+            "磨皮", 0, BEAUTY_MAX, 1, BEAUTY_DEFAULT_SMOOTH, 0)
+        beauty_card.addWidget(self.smooth_row)
+        self.whiten_row = widgets.SliderRow(
+            "美白", 0, BEAUTY_MAX, 1, BEAUTY_DEFAULT_WHITEN, 0)
         beauty_card.addWidget(self.whiten_row)
-
-        # 上一版亮度/对比度/饱和度三 slider 横排一行,在 300px 右栏内挤切「饱和度」。
-        # 拆 3 行与「面部比例 / 头距顶距离」同档,跟其它参数面板视觉一致。
-        self.brightness_row = widgets.SliderRow("亮度", -5, 25, 1, 0, 0)
-        self.contrast_row = widgets.SliderRow("对比", -10, 50, 1, 0, 0)
-        self.saturation_row = widgets.SliderRow("饱和", -10, 50, 1, 0, 0)
-        beauty_card.addWidget(self.brightness_row)
-        beauty_card.addWidget(self.contrast_row)
-        beauty_card.addWidget(self.saturation_row)
-
-        self.sharpen_row = widgets.SliderRow("锐化", 0, 5, 1, 0, 0)
-        beauty_card.addWidget(self.sharpen_row)
 
         self.reset_beauty_btn = PushButton("重置美颜")
         self.reset_beauty_btn.clicked.connect(lambda: self._reset_beauty())
@@ -337,8 +332,7 @@ class ProcessView(QWidget):
         v.addWidget(beauty_card)
 
         # 美颜滑块实时预览联动（与高级参数同一套防抖）
-        for r in (self.whiten_row, self.brightness_row, self.contrast_row,
-                  self.saturation_row, self.sharpen_row):
+        for r in (self.smooth_row, self.whiten_row):
             r.valueChanged.connect(self._schedule_live_preview)
 
         v.addStretch(1)
@@ -575,9 +569,8 @@ class ProcessView(QWidget):
         self.size_unit_combo.setCurrentIndex(0)  # 单位归位 px
 
     def _reset_beauty(self):
-        for r in (self.whiten_row, self.brightness_row, self.contrast_row,
-                  self.saturation_row, self.sharpen_row):
-            r.set_value(0)
+        self.smooth_row.set_value(BEAUTY_DEFAULT_SMOOTH)
+        self.whiten_row.set_value(BEAUTY_DEFAULT_WHITEN)
 
     def set_model_status(self, text, missing=False):
         """更新模型就绪状态。
@@ -673,15 +666,11 @@ class ProcessView(QWidget):
     def get_beauty_params(self):
         try:
             return {
+                "smooth": int(self.smooth_row.value()),
                 "whiten": int(self.whiten_row.value()),
-                "brightness": int(self.brightness_row.value()),
-                "contrast": int(self.contrast_row.value()),
-                "saturation": int(self.saturation_row.value()),
-                "sharpen": int(self.sharpen_row.value()),
             }
         except (ValueError, TypeError):
-            return {"whiten": 0, "brightness": 0, "contrast": 0,
-                    "saturation": 0, "sharpen": 0}
+            return {"smooth": 0, "whiten": 0}
 
     def get_watermark_params(self):
         try:

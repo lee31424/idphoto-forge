@@ -124,25 +124,57 @@ def test_readd_after_delete(win, app):
 
 
 def test_beauty_keeps_background():
+    """磨皮/美白只作用在皮肤上，透明区域合成后必须是纯底色。"""
     from app import IDPhotoApp
     from image_utils import add_background_to_image
 
     BLUE = (219, 142, 67)                    # #438EDB 的 BGR
+    SKIN = (150, 180, 220)                   # 肤色（BGR），能被 YCrCb 遮罩识别
     bgra = np.zeros((80, 60, 4), dtype=np.uint8)
-    bgra[..., :3] = 200
+    bgra[..., :3] = SKIN
     bgra[..., 3] = 0                         # 默认全透明
     bgra[10:70, 10:50, 3] = 255              # 中间一块"人像"
 
-    beauty = {"whiten": 15, "brightness": 10, "contrast": 10,
-              "saturation": 10, "sharpen": 0}
+    beauty = {"smooth": 8, "whiten": 8}
     out = IDPhotoApp._apply_beauty_bgra(bgra, beauty)
     assert np.array_equal(out[..., 3], bgra[..., 3]), "alpha 被改动"
     assert not np.array_equal(out[10:70, 10:50, :3], bgra[10:70, 10:50, :3]), \
-        "人像区域没有被美颜"
+        "皮肤区域没有被美颜"
 
     composed = add_background_to_image(out, BLUE, 0)
     corner = tuple(int(v) for v in composed[0, 0])
     assert corner == BLUE, f"背景被美颜污染: {corner} != {BLUE}"
+
+
+def test_beauty_smooth_and_whiten():
+    """磨皮应降低皮肤纹理，美白应提亮皮肤，且透明区不被改动。"""
+    from app import IDPhotoApp
+
+    rng = np.random.default_rng(0)
+    skin = np.full((120, 100, 3), (150, 180, 220), dtype=np.int16)
+    skin = np.clip(skin + rng.integers(-20, 21, skin.shape), 0, 255).astype(np.uint8)
+    bgra = np.zeros((120, 100, 4), dtype=np.uint8)
+    bgra[..., :3] = skin
+    bgra[10:110, 10:90, 3] = 255
+
+    def lap_var(img):
+        return float(cv2.Laplacian(
+            cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var())
+
+    smooth_out = IDPhotoApp._apply_beauty_bgra(bgra, {"smooth": 10, "whiten": 0})
+    before, after = lap_var(bgra[10:110, 10:90, :3]), lap_var(
+        smooth_out[10:110, 10:90, :3])
+    assert after < before * 0.7, f"磨皮没生效: {before:.1f} → {after:.1f}"
+
+    whiten_out = IDPhotoApp._apply_beauty_bgra(bgra, {"smooth": 0, "whiten": 10})
+    assert whiten_out[10:110, 10:90, :3].mean() > \
+        bgra[10:110, 10:90, :3].mean() + 5, "美白没生效"
+
+    # 透明区域（alpha=0）无论怎么调都不应被改
+    assert np.array_equal(smooth_out[:5, :5, :3], bgra[:5, :5, :3]), \
+        "透明区域被磨皮污染"
+    assert np.array_equal(whiten_out[:5, :5, :3], bgra[:5, :5, :3]), \
+        "透明区域被美白污染"
 
 
 def test_batch_jpeg_format():
@@ -713,6 +745,7 @@ def main():
         check("删除中间图片后结果索引重排", lambda: test_remove_reindex(win))
         check("删除后可重新导入同一文件", lambda: test_readd_after_delete(win, app))
         check("美颜不污染背景色", test_beauty_keeps_background)
+        check("磨皮/美白效果（降纹理/提亮）", test_beauty_smooth_and_whiten)
         check("批量导出 JPG 格式正确（含 KB=0）", test_batch_jpeg_format)
         check("中心渐变向量化（等价 + 提速）", test_gradient_equivalence_and_speed)
         check("实时预览单飞", lambda: test_live_preview_single_flight(win, app))

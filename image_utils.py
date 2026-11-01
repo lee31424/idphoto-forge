@@ -207,63 +207,95 @@ def _generate_gradient(start_bgr: tuple, width: int, height: int, mode: str = "u
 
 
 # ============================================================
-#  美颜处理
+#  美颜处理（磨皮 + 美白，只作用于皮肤）
 # ============================================================
 
-def apply_beauty(image_bgr: np.ndarray, params: dict) -> np.ndarray:
-    """
-    应用美颜参数。
-    params: {
-        whiten: int 0-15,
-        brightness: int -5~25,
-        contrast: int -10~50,
-        saturation: int -10~50,
-        sharpen: int 0~5
-    }
+# 人像抠图后的「透明像素」没有真实颜色，肤色检测要排除这些区域，
+# 避免把边缘的杂色当成皮肤一起处理。
+def _skin_mask(image_bgr: np.ndarray) -> np.ndarray:
+    """肤色遮罩（0~1 浮点）：YCrCb 阈值 + 形态学去噪 + 羽化。"""
+    ycrcb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2YCrCb)
+    lower = np.array([0, 133, 77], dtype=np.uint8)     # Y, Cr, Cb 下限
+    upper = np.array([255, 173, 127], dtype=np.uint8)  # Y, Cr, Cb 上限
+    mask = cv2.inRange(ycrcb, lower, upper)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)    # 去掉噪点
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)   # 补小洞
+    mask = cv2.GaussianBlur(mask, (0, 0), 3)                 # 边缘羽化，避免硬边
+    return mask.astype(np.float32) / 255.0
+
+
+def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
+    """美颜：磨皮 + 美白，只处理皮肤区域。
+
+    params: {"smooth": 0~10, "whiten": 0~10}
+    alpha:  可选，uint8 人像透明度（BGRA 的 A 通道）；传入后效果只落在人像内，
+            透明背景不会被误处理。
+
+    磨皮 = 双边滤波（保边）+ 回加 35% 高频细节，避免"塑料脸"；
+    美白 = 在 LAB 的 L 通道提亮、轻微去黄，比 RGB 直接加亮度更自然。
     """
     if image_bgr is None or image_bgr.size == 0:
         return image_bgr
     if len(image_bgr.shape) != 3 or image_bgr.shape[2] != 3:
         return image_bgr
 
-    result = image_bgr.astype(np.float32)
+    smooth = int(params.get("smooth", 0) or 0)
+    whiten = int(params.get("whiten", 0) or 0)
+    if smooth <= 0 and whiten <= 0:
+        return image_bgr
 
-    # 亮度
-    brightness = int(params.get("brightness", 0))
-    if brightness != 0:
-        result = np.clip(result + brightness * 2.5, 0, 255)
+    mask = _skin_mask(image_bgr)
+    if alpha is not None and getattr(alpha, "shape", None) == image_bgr.shape[:2]:
+        mask = mask * (alpha.astype(np.float32) / 255.0)
+    if float(mask.max()) <= 0.01:
+        return image_bgr
 
-    # 对比度
-    contrast = int(params.get("contrast", 0))
-    if contrast != 0:
-        factor = 1.0 + contrast / 50.0
-        result = np.clip((result - 128.0) * factor + 128.0, 0, 255)
+    # 只在「皮肤包围盒」里做浮点运算：整张图算会多花 3 倍时间，
+    # 而皮肤通常只占画面一小块。pad 给滤波留一点上下文，避免边缘接缝。
+    height, width = image_bgr.shape[:2]
+    ys, xs = np.where(mask > 0.01)
+    if ys.size == 0:
+        return image_bgr
+    pad = 24
+    y0 = max(0, int(ys.min()) - pad)
+    y1 = min(height, int(ys.max()) + 1 + pad)
+    x0 = max(0, int(xs.min()) - pad)
+    x1 = min(width, int(xs.max()) + 1 + pad)
+    roi = image_bgr[y0:y1, x0:x1]
+    roi_mask = mask[y0:y1, x0:x1]
 
-    # 饱和度
-    saturation = int(params.get("saturation", 0))
-    if saturation != 0:
-        hsv = cv2.cvtColor(result.astype(np.uint8), cv2.COLOR_BGR2HSV).astype(np.float32)
-        factor = 1.0 + saturation / 50.0
-        hsv[:, :, 1] = np.clip(hsv[:, :, 1] * factor, 0, 255)
-        result = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR).astype(np.float32)
+    result = roi.astype(np.float32)
 
-    # 美白（gamma + 轻微高斯提亮）
-    whiten = int(params.get("whiten", 0))
+    # ---- 磨皮：双边滤波（保边平滑）+ 高频回加 ----
+    if smooth > 0:
+        strength = min(max(smooth, 0), 10) / 10.0 * 0.85
+        smoothed = cv2.bilateralFilter(roi, 9, 75, 75).astype(np.float32)
+        base = cv2.GaussianBlur(roi, (0, 0), 2.0).astype(np.float32)
+        detail = result - base
+        blended = np.clip(smoothed + detail * 0.35, 0, 255)
+        k = (roi_mask * strength)[..., None]
+        result = result * (1.0 - k) + blended * k
+
+    # ---- 美白：LAB 的 L 提亮 + 轻微去黄 ----
     if whiten > 0:
-        gamma = 1.0 - whiten * 0.04
-        gamma = max(0.4, gamma)
-        result = np.clip(np.power(result / 255.0, gamma) * 255.0, 0, 255)
+        w = min(max(whiten, 0), 10) / 10.0
+        before = result
+        lab = cv2.cvtColor(np.clip(result, 0, 255).astype(np.uint8),
+                           cv2.COLOR_BGR2LAB).astype(np.float32)
+        lab[:, :, 0] = np.clip(lab[:, :, 0] + 16.0 * w * roi_mask, 0, 255)
+        lab[:, :, 2] = np.clip(lab[:, :, 2] - 3.0 * w * roi_mask, 0, 255)
+        whitened = cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8),
+                                cv2.COLOR_LAB2BGR).astype(np.float32)
+        # LAB 往返本身有 ±1 取整误差：按遮罩混回，保证遮罩外像素逐位不变
+        result = before + (whitened - before) * roi_mask[..., None]
 
-    result = result.astype(np.uint8)
-
-    # 锐化
-    sharpen = int(params.get("sharpen", 0))
-    if sharpen > 0:
-        kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]], dtype=np.float32)
-        for _ in range(sharpen):
-            result = cv2.filter2D(result, -1, kernel)
-
-    return result
+    processed = np.clip(result, 0, 255).astype(np.uint8)
+    out = image_bgr.copy()
+    # 只替换遮罩覆盖的像素，其余（含透明区）与输入逐位一致
+    out[y0:y1, x0:x1] = np.where(roi_mask[..., None] > 0.004, processed, roi)
+    return out
 
 
 # ============================================================
