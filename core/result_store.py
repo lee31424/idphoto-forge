@@ -12,6 +12,7 @@ import tempfile
 import shutil
 import time
 import uuid
+import threading
 import cv2
 from collections import OrderedDict
 
@@ -26,6 +27,7 @@ class ResultStore:
         os.makedirs(self.root, exist_ok=True)
         self._cache = OrderedDict()
         self._max = int(max_cached)
+        self._lock = threading.Lock()   # 预览线程与排版后台线程都会读盘
 
     def put(self, key, std, hd=None, matting=None):
         """把三张图写盘，返回 {kind: path}。"""
@@ -45,26 +47,31 @@ class ResultStore:
     def load(self, path):
         if not path:
             return None
-        if path in self._cache:
-            self._cache.move_to_end(path)
-            return self._cache[path]
+        with self._lock:
+            if path in self._cache:
+                self._cache.move_to_end(path)
+                return self._cache[path]
         img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
         if img is not None:
-            self._cache[path] = img
-            while len(self._cache) > self._max:
-                self._cache.popitem(last=False)
+            with self._lock:
+                self._cache[path] = img
+                while len(self._cache) > self._max:
+                    self._cache.popitem(last=False)
         return img
 
     def drop(self, paths):
+        with self._lock:
+            for path in (paths or {}).values():
+                self._cache.pop(path, None)
         for path in (paths or {}).values():
-            self._cache.pop(path, None)
             try:
                 os.remove(path)
             except OSError:
                 pass
 
     def clear(self):
-        self._cache.clear()
+        with self._lock:
+            self._cache.clear()
         shutil.rmtree(self.root, ignore_errors=True)
 
     @staticmethod

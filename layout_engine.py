@@ -102,6 +102,7 @@ class LayoutEngine:
         crop_line: bool = False,
         crop_line_full_page: bool = True,
         sources: list = None,
+        on_page=None,
     ) -> list:
         """
         生成单一尺寸的排版图（多张不同照片各排一份，自动分页）。
@@ -109,10 +110,12 @@ class LayoutEngine:
         用于「一键排版 / 发送到排版」等批量场景：队列里每张照片各排一份，
         照片数量超过一页容量时自动翻页，避免只排第一张的「只有一版」问题。
         sources: 与 photos 等长的来源标注列表（可选），用于页角标注。
+        on_page : 每生成一页回调 on_page(已生成页数)，供 UI 显示进度。
         """
         return self._layout_photos(
             list(photos), photo_width, photo_height, crop_line, repeat=False,
             crop_line_full_page=crop_line_full_page, sources=sources,
+            on_page=on_page,
         )
 
     def _layout_photos(
@@ -124,12 +127,14 @@ class LayoutEngine:
         repeat: bool,
         crop_line_full_page: bool = True,
         sources: list = None,
+        on_page=None,
     ) -> list:
         """核心排版：把多张照片按网格铺到画布（可多页）。
 
         repeat=True : 仅有一张照片时将其重复填满每一页（一版多张相同照）。
         repeat=False: 每张照片各排一份，用完即止，超出单页容量自动翻页。
         sources     : 与 photos 等长的来源标注（可选），按页记录到 last_page_sources。
+        on_page     : 每生成一页回调 on_page(已生成页数)，供 UI 显示进度。
         """
         if not photos:
             raise ValueError("输入照片为空")
@@ -199,6 +204,8 @@ class LayoutEngine:
                 self._paste_image(canvas, placed, x, y)
             pages.append(canvas)
             self.last_page_sources.append(chunk_sources)
+            if on_page is not None:
+                on_page(len(pages))
 
         return pages
 
@@ -219,6 +226,7 @@ class LayoutEngine:
         items: list,
         crop_line: bool = False,
         crop_line_full_page: bool = True,
+        on_page=None,
     ) -> list:
         """
         生成混合尺寸排版图（同纸混排，货架式铺排，节约纸张）。
@@ -314,6 +322,8 @@ class LayoutEngine:
                 self._paste_image(page_canvas, pphoto, px, py)
             pages.append(page_canvas)
             self.last_page_sources.append(list(page_sources))
+            if on_page is not None:
+                on_page(len(pages))
 
         def new_page():
             """收尾当前页并开新空白页，重置行/光标状态。"""

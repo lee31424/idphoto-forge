@@ -1799,14 +1799,15 @@ class IDPhotoApp(QMainWindow):
             return item.get("name") or ""
         return item.get("name") or ""
 
-    def _collect_layout_source_photos(self):
+    def _collect_layout_source_photos(self, progress=None):
         """排版数据源：每张成品带上标准照 / 高清照 / 抠图 + 页角标注。
 
-        批量处理时这些是 LazyImage（路径引用），生成排版时才读盘；
-        单张处理时是 ndarray，直接使用。
+        批量处理时这些是 LazyImage（路径引用），这里逐张读盘；
+        3000 张时读盘要几十秒，所以放到后台线程并通过 progress 回报进度。
         """
         photos = []
-        for it in self.ready_photos:
+        total = len(self.ready_photos)
+        for i, it in enumerate(self.ready_photos, 1):
             if it.get("image") is None:
                 continue
             img = self._resolve_ready_image(it.get("image"))
@@ -1816,6 +1817,8 @@ class IDPhotoApp(QMainWindow):
                            "hd": self._resolve_ready_image(it.get("hd")),
                            "matting": self._resolve_ready_image(it.get("matting")),
                            "label": self._source_display_label(it)})
+            if progress is not None and (i % 10 == 0 or i == total):
+                progress(i, total)
         return photos
 
     @staticmethod
@@ -1907,7 +1910,27 @@ class IDPhotoApp(QMainWindow):
             draw_bottom_right_label(page, text)
         return pages
 
-    def _compute_layout_pages(self, items, params):
+    @staticmethod
+    def _estimate_layout_pages(configs, n_photos, params):
+        """粗略估计会生成多少页（页数过多时提前提醒，避免 OOM）。"""
+        import math
+        pw, ph = params["paper"]
+        gap_h, gap_v = params["gaps"]
+        bleed = params["bleed"]
+        eng = LayoutEngine(canvas_width=pw, canvas_height=ph,
+                           photo_interval_h=gap_h, photo_interval_v=gap_v,
+                           side_interval_w=bleed, side_interval_h=bleed)
+        avail_w = pw - 2 * bleed
+        avail_h = ph - 2 * bleed
+        pages = 0
+        for _name, w, h, count, _bg in configs:
+            cols = eng._count_fit(avail_w, int(w), gap_h)
+            rows = eng._count_fit(avail_h, int(h), gap_v)
+            cap = max(1, cols * rows)
+            pages += math.ceil(n_photos * int(count) / cap)
+        return pages
+
+    def _compute_layout_pages(self, items, params, on_page=None):
         """LayoutItem 列表 → 画布页（纯计算）。返回 (pages, skipped, labels)。"""
         pw, ph = params["paper"]
         gap_h, gap_v = params["gaps"]
@@ -1924,13 +1947,14 @@ class IDPhotoApp(QMainWindow):
                 [it.image for it in items], w, h,
                 crop_line=params["crop_line"],
                 crop_line_full_page=params["crop_full"],
-                sources=[getattr(it, "source", "") for it in items])
+                sources=[getattr(it, "source", "") for it in items],
+                on_page=on_page)
             self._draw_page_labels(pages, engine.last_page_sources)
             return pages, [], []
 
         pages = engine.generate_mixed_size(
             items, crop_line=params["crop_line"],
-            crop_line_full_page=params["crop_full"])
+            crop_line_full_page=params["crop_full"], on_page=on_page)
         self._draw_page_labels(pages, engine.last_page_sources)
         skipped = list(getattr(engine, "last_skipped_sizes", []))
         label_by_size = {}
@@ -2021,18 +2045,59 @@ class IDPhotoApp(QMainWindow):
                 self._show_page("process")
             return
 
-        source_photos = self._collect_layout_source_photos()
         params = self._layout_params()   # 必须在主线程读
+        # 页数过多会占用大量内存（每页约 6.5MB），先估算并提醒，避免直接 OOM
+        est_pages = self._estimate_layout_pages(
+            mixed_items_config, len(self.ready_photos), params)
+        page_mb = params["paper"][0] * params["paper"][1] * 3 / 1024 / 1024
+        if est_pages > 0 and est_pages * page_mb > 1500:
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Warning)
+            box.setWindowTitle("排版页数较多")
+            box.setText(
+                f"预计生成约 {est_pages} 页，单页约 {page_mb:.1f} MB，"
+                f"合计约 {est_pages * page_mb / 1024:.1f} GB 内存。\n\n"
+                "页数过多会长时间无响应，甚至内存不足。建议分批排版"
+                "（例如每次 300~500 张成品），或减少每个规格的张数。\n\n"
+                "仍要继续吗？")
+            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            box.button(QMessageBox.Yes).setText("继续")
+            box.button(QMessageBox.No).setText("取消")
+            if box.exec() != QMessageBox.Yes:
+                return
+
         self._layout_busy = True
-        self._set_status("正在生成排版…")
+        self._set_status("正在读取成品照…")
+        self._set_progress("读取 0/%d" % len(self.ready_photos))
         QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        def _read_progress(i, n):
+            self._safe_after(0, lambda: (self._set_status(f"正在读取成品照 {i}/{n}…"),
+                                         self._set_progress(f"读取 {i}/{n}")))
 
         def _worker():
             try:
-                items = self._build_layout_items(mixed_items_config, source_photos)
+                # 读盘（3000 张时几十秒）也放后台，否则界面像卡死
+                sources = self._collect_layout_source_photos(progress=_read_progress)
+                self._safe_after(0, lambda: (self._set_status(
+                    f"正在排版（{len(sources)} 张成品）…"),
+                    self._set_progress("排版中…")))
+                items = self._build_layout_items(mixed_items_config, sources)
                 if not items:
                     raise ValueError("没有有效的排版条目。")
-                pages, skipped, labels = self._compute_layout_pages(items, params)
+                last = [0.0]
+
+                def _page_progress(n):
+                    now = time.time()
+                    if now - last[0] < 0.25:      # 太快刷新会刷屏，0.25s 一次足够
+                        return
+                    last[0] = now
+                    self._safe_after(0, lambda: (
+                        self._set_status(f"正在排版：已生成 {n} 页…"),
+                        self._set_progress(f"{n} 页")))
+
+                pages, skipped, labels = self._compute_layout_pages(
+                    items, params, on_page=_page_progress)
             except Exception as e:  # noqa: BLE001 - 统一回到主线程报错
                 self._safe_after(0, lambda err=e: self._on_layout_failed(err))
                 return
@@ -2045,16 +2110,31 @@ class IDPhotoApp(QMainWindow):
         self._layout_busy = False
         QApplication.restoreOverrideCursor()
         self._set_status("排版失败")
+        self._set_progress("")
         theme.info(self, "error", "排版失败", str(err))
 
     def _on_layout_ready(self, items, pages, skipped, labels):
+        self.layout_queue = items
+        self._set_status(f"正在生成预览（{len(pages)} 页）…")
+        self._set_progress("刷新预览…")
+        QApplication.processEvents()
+        self._apply_layout_pages(pages, labels, skipped, show=True)
         self._layout_busy = False
         QApplication.restoreOverrideCursor()
-        self.layout_queue = items
-        self._apply_layout_pages(pages, labels, skipped, show=True)
+        note = f"排版完成：{len(pages)} 页"
+        if len(pages) > 200:
+            note += "（缩略图仅显示前 200 页）"
+        self._set_status(note)
+        self._set_progress("")
 
     def _refresh_layout_thumbnails(self, pages):
-        self.right_thumb.refresh_pages(pages)
+        # 页数很多时（例如 3000 张成品）一页一个缩略图控件会卡死主线程，
+        # 只渲染前 200 页；全部页面仍可通过页码/预览浏览。
+        limit = 200
+        shown = pages if len(pages) <= limit else pages[:limit]
+        if len(pages) > limit:
+            self._set_status(f"共 {len(pages)} 页（缩略图仅显示前 {limit} 页）")
+        self.right_thumb.refresh_pages(shown)
 
     def on_layout_page_select(self, idx):
         if 0 <= idx < len(self.layout_pages):
