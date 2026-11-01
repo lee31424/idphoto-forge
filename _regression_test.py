@@ -460,6 +460,8 @@ def test_export_all_layouts(win, app):
             lambda *a, **k: tmpdir)
         try:
             win.on_export_all_layouts()
+            # 导出已改为后台线程：等它真正结束（_export_busy 复位）
+            pump(app, until=lambda: not win._export_busy, timeout=30)
         finally:
             appmod.QFileDialog.getExistingDirectory = orig
 
@@ -473,6 +475,19 @@ def test_export_all_layouts(win, app):
             assert img is not None, f"{f} 读不出来"
             assert img.shape == (300, 200, 3), f"{f} 尺寸 {img.shape}"
 
+        # 再导一次到同一目录：不能覆盖，也不能因为同名而卡住/不写
+        orig = appmod.QFileDialog.getExistingDirectory
+        appmod.QFileDialog.getExistingDirectory = staticmethod(
+            lambda *a, **k: tmpdir)
+        try:
+            win.on_export_all_layouts()
+            pump(app, until=lambda: not win._export_busy, timeout=30)
+        finally:
+            appmod.QFileDialog.getExistingDirectory = orig
+        files2 = sorted(os.listdir(tmpdir))
+        assert len(files2) == 6, f"重复导出应自动加后缀，实际 {files2}"
+        assert "排版图_01_2.png" in files2, files2
+
     # 输出格式切到 JPEG 时，导出应为真 JPEG
     lv = win.pages["layout"]
     old_fmt = lv.get_format()
@@ -484,6 +499,7 @@ def test_export_all_layouts(win, app):
                 lambda *a, **k: jdir)
             try:
                 win.on_export_all_layouts()
+                pump(app, until=lambda: not win._export_busy, timeout=30)
             finally:
                 appmod.QFileDialog.getExistingDirectory = orig
             files = sorted(os.listdir(jdir))
@@ -492,6 +508,26 @@ def test_export_all_layouts(win, app):
                 assert fh.read(3) == b"\xff\xd8\xff", "JPEG 格式不对"
     finally:
         lv.export_format_group.set(old_fmt)
+    win.layout_pages = []
+
+
+def test_generate_layout_async(win, app):
+    """「排版」按钮走后台线程：结束后 busy 复位、页面已交给界面。"""
+    std = np.full((413, 295, 4), 120, dtype=np.uint8)
+    win.ready_photos = [{"name": "a.png", "path": "", "image": std,
+                         "matting": None, "hd": None}]
+    win.layout_pane.mixed_items = [("一寸", 295, 413, 4, "")]
+    win.layout_pages = []
+
+    win.on_generate_mixed_layout()
+    assert win._layout_busy, "应立刻进入生成中状态（后台线程）"
+    pump(app, until=lambda: not win._layout_busy, timeout=30)
+    assert not win._layout_busy, "排版线程没有结束"
+    assert win.layout_pages, "后台生成没有产出页面"
+    assert win.pages["layout"].layout_pages, "界面没有收到排版结果"
+
+    win.ready_photos = []
+    win.layout_pane.mixed_items = []
     win.layout_pages = []
 
 
@@ -553,6 +589,7 @@ def main():
         check("排版按规格自动选高清图", lambda: test_layout_picks_hd_by_target(win))
         check("成品列表 HD 标记", lambda: test_ready_list_hd_marker(win))
         check("批量导出排版图（多页）", lambda: test_export_all_layouts(win, app))
+        check("排版后台生成（不卡 UI）", lambda: test_generate_layout_async(win, app))
         check("默认纸张为 6 寸相纸", lambda: test_default_paper(win))
         check("旋转校正默认开启 + 下拉一致",
               lambda: test_defaults_and_dropdowns(win))

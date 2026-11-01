@@ -218,6 +218,8 @@ class IDPhotoApp(QMainWindow):
         self.selected_ready_idx = -1
         self.current_page = None
         self.processing = False
+        self._layout_busy = False        # 排版生成中（后台线程），防重入
+        self._export_busy = False        # 排版图导出中（后台线程），防重入
         self._stop_batch = False
         self._pause_evt = threading.Event()  # 批量暂停/继续控制（set=运行，clear=暂停）
         self._pause_evt.set()
@@ -1661,8 +1663,94 @@ class IDPhotoApp(QMainWindow):
             return std
         return hd if need > 1.0 else std
 
-    def _rebuild_layout_from_sources(self, show=True, source_photos=None):
+    # ----------------------------------------------------------
+    #  排版：纯计算（不碰 Qt，可放后台线程）+ 结果落地
+    # ----------------------------------------------------------
+    def _layout_params(self):
+        """在主线程读取排版参数（worker 线程禁止访问 Qt 控件）。"""
+        lv = self.pages["layout"]
+        return {
+            "paper": lv.get_paper_px(),
+            "gaps": lv.get_photo_interval(),
+            "bleed": lv.get_bleed_margin(),
+            "crop_line": lv.get_crop_line(),
+            "crop_full": lv.get_crop_line_full_page(),
+        }
+
+    def _build_layout_items(self, mixed_items_config, source_photos):
+        """配置 + 源图 → LayoutItem 列表（纯计算）。
+
+        每张成品会按「规格 × 源图」组合一次：先按目标尺寸挑标准照/高清照，
+        需要换底时用 2000px 抠图重新铺底，再居中裁切到规格像素。
+        """
         from image_utils import add_background_to_image
+        items = []
+        for name, w, h, count, bg_hex in mixed_items_config:
+            w, h, count = int(w), int(h), int(count)
+            if w <= 0 or h <= 0 or count <= 0:
+                continue
+            for src in source_photos:
+                base_img = self._pick_layout_base(src, w, h)
+                if bg_hex:
+                    matting = src.get("matting")
+                    if matting is not None:
+                        rgb = hex_to_rgb_tuple(bg_hex)
+                        bgr_color = (rgb[2], rgb[1], rgb[0])
+                        base_img = add_background_to_image(matting, bgr_color, render_mode=0)
+                resized = self._center_crop_to_size(base_img, w, h)
+                for _ in range(count):
+                    items.append(LayoutItem(image=resized.copy(),
+                                            width=w, height=h, label=name))
+        return items
+
+    def _compute_layout_pages(self, items, params):
+        """LayoutItem 列表 → 画布页（纯计算）。返回 (pages, skipped, labels)。"""
+        pw, ph = params["paper"]
+        gap_h, gap_v = params["gaps"]
+        bleed = params["bleed"]
+        engine = LayoutEngine(
+            canvas_width=pw, canvas_height=ph,
+            photo_interval_h=gap_h, photo_interval_v=gap_v,
+            side_interval_w=bleed, side_interval_h=bleed,
+        )
+        unique_sizes = {(int(it.width), int(it.height)) for it in items}
+        if len(unique_sizes) == 1:
+            w, h = int(items[0].width), int(items[0].height)
+            pages = engine.generate_photos(
+                [it.image for it in items], w, h,
+                crop_line=params["crop_line"],
+                crop_line_full_page=params["crop_full"])
+            return pages, [], []
+
+        pages = engine.generate_mixed_size(
+            items, crop_line=params["crop_line"],
+            crop_line_full_page=params["crop_full"])
+        skipped = list(getattr(engine, "last_skipped_sizes", []))
+        label_by_size = {}
+        for it in items:
+            label_by_size.setdefault((int(it.width), int(it.height)),
+                                     getattr(it, "label", "") or "")
+        labels = [(label_by_size.get(k, ""), v)
+                  for k, v in getattr(engine, "last_size_colors", {}).items()]
+        return pages, skipped, labels
+
+    def _apply_layout_pages(self, pages, labels, skipped, show):
+        """把算好的页交给界面（必须在主线程调用）。"""
+        if not pages:
+            theme.info(self, "error", "排版失败", "没有可排版的有效照片。")
+            return
+        self.layout_pages = pages
+        self.pages["layout"].set_layout_pages(pages, labels)
+        if show:
+            self._show_page("layout")
+        msg = f"生成排版：共 {len(pages)} 页"
+        if skipped:
+            msg += "（过大尺寸已跳过：" + "、".join(
+                f"{w}x{h}" for w, h in skipped) + "）"
+        self._set_status(msg)
+
+    def _rebuild_layout_from_sources(self, show=True, source_photos=None):
+        """同步生成排版（测试 / 单张兜底用；界面按钮走异步版本）。"""
         mixed_items_config = self.layout_pane.get_mixed_items()
         if not mixed_items_config:
             theme.info(self, "warning", "提示", "排版页没有配置规格，请先添加至少一个尺寸条目。")
@@ -1674,23 +1762,7 @@ class IDPhotoApp(QMainWindow):
                        "没有可排版的照片。请先在「证件照处理」页面处理照片，"
                        "或在排版页导入成品证件照。")
             return False
-        items = []
-        for name, w, h, count, bg_hex in mixed_items_config:
-            w, h, count = int(w), int(h), int(count)
-            if w <= 0 or h <= 0 or count <= 0:
-                continue
-            for src in source_photos:
-                # 先按目标规格挑"标准照还是高清照"，再决定是否重新铺底
-                base_img = self._pick_layout_base(src, w, h)
-                if bg_hex:
-                    matting = src.get("matting")
-                    if matting is not None:
-                        rgb = hex_to_rgb_tuple(bg_hex)
-                        bgr_color = (rgb[2], rgb[1], rgb[0])
-                        base_img = add_background_to_image(matting, bgr_color, render_mode=0)
-                resized = self._center_crop_to_size(base_img, w, h)
-                for _ in range(count):
-                    items.append(LayoutItem(image=resized.copy(), width=w, height=h, label=name))
+        items = self._build_layout_items(mixed_items_config, source_photos)
         if not items:
             theme.info(self, "warning", "提示", "没有有效的排版条目。")
             return False
@@ -1699,55 +1771,16 @@ class IDPhotoApp(QMainWindow):
         return True
 
     def _generate_layout_from_queue(self, show=False):
+        """用已构建的 layout_queue 同步出图（兼容旧调用）。"""
         if not self.layout_queue:
             return
-        items = list(self.layout_queue)
-        crop_line = self.pages["layout"].get_crop_line()
-        crop_line_full_page = self.pages["layout"].get_crop_line_full_page()
-        pw, ph = self.pages["layout"].get_paper_px()
-        gap_h, gap_v = self.pages["layout"].get_photo_interval()
-        bleed = self.pages["layout"].get_bleed_margin()
-        engine = LayoutEngine(
-            canvas_width=pw, canvas_height=ph,
-            photo_interval_h=gap_h, photo_interval_v=gap_v,
-            side_interval_w=bleed, side_interval_h=bleed,
-        )
         try:
-            unique_sizes = {(int(it.width), int(it.height)) for it in items}
-            if len(unique_sizes) == 1:
-                w, h = int(items[0].width), int(items[0].height)
-                self.layout_pages = engine.generate_photos(
-                    [it.image for it in items], w, h, crop_line=crop_line,
-                    crop_line_full_page=crop_line_full_page)
-                skipped = []
-                size_color_labels = []
-            else:
-                self.layout_pages = engine.generate_mixed_size(
-                    items, crop_line=crop_line,
-                    crop_line_full_page=crop_line_full_page)
-                skipped = list(getattr(engine, "last_skipped_sizes", []))
-                label_by_size = {}
-                for it in items:
-                    label_by_size.setdefault(
-                        (int(it.width), int(it.height)), getattr(it, "label", "") or "")
-                size_color_labels = [
-                    (label_by_size.get(k, ""), v)
-                    for k, v in getattr(engine, "last_size_colors", {}).items()
-                ]
+            pages, skipped, labels = self._compute_layout_pages(
+                list(self.layout_queue), self._layout_params())
         except ValueError as e:
             theme.info(self, "error", "排版失败", str(e))
             return
-        if not self.layout_pages:
-            theme.info(self, "error", "排版失败", "没有可排版的有效照片。")
-            return
-        self.pages["layout"].set_layout_pages(self.layout_pages, size_color_labels)
-        if show:
-            self._show_page("layout")
-        msg = f"生成排版：共 {len(self.layout_pages)} 页"
-        if skipped:
-            msg += "（过大尺寸已跳过：" + "、".join(
-                f"{w}x{h}" for w, h in skipped) + "）"
-        self._set_status(msg)
+        self._apply_layout_pages(pages, labels, skipped, show)
 
     def _on_process_error(self, short_msg, detail_msg):
         self._stop_processing()
@@ -1755,6 +1788,9 @@ class IDPhotoApp(QMainWindow):
         theme.info(self, "error", "处理失败", detail_msg)
 
     def on_generate_mixed_layout(self):
+        """生成排版（后台线程）：页数多时不再卡死界面。"""
+        if getattr(self, "_layout_busy", False):
+            return
         mixed_items_config = self.layout_pane.get_mixed_items()
         if not mixed_items_config:
             theme.info(self, "warning", "提示", "请先添加至少一个尺寸条目。")
@@ -1767,6 +1803,7 @@ class IDPhotoApp(QMainWindow):
                     "hd": self.hd_image,
                     "matting": self.standard_matting,
                 }
+                # 单张兜底：只有一张，同步即可
                 self._rebuild_layout_from_sources(show=True, source_photos=[src])
             else:
                 theme.info(self, "warning", "提示",
@@ -1774,7 +1811,38 @@ class IDPhotoApp(QMainWindow):
                            "或在排版页导入成品证件照。")
                 self._show_page("process")
             return
-        self._rebuild_layout_from_sources(show=True)
+
+        source_photos = self._collect_layout_source_photos()
+        params = self._layout_params()   # 必须在主线程读
+        self._layout_busy = True
+        self._set_status("正在生成排版…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        def _worker():
+            try:
+                items = self._build_layout_items(mixed_items_config, source_photos)
+                if not items:
+                    raise ValueError("没有有效的排版条目。")
+                pages, skipped, labels = self._compute_layout_pages(items, params)
+            except Exception as e:  # noqa: BLE001 - 统一回到主线程报错
+                self._safe_after(0, lambda err=e: self._on_layout_failed(err))
+                return
+            self._safe_after(0, lambda: self._on_layout_ready(
+                items, pages, skipped, labels))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_layout_failed(self, err):
+        self._layout_busy = False
+        QApplication.restoreOverrideCursor()
+        self._set_status("排版失败")
+        theme.info(self, "error", "排版失败", str(err))
+
+    def _on_layout_ready(self, items, pages, skipped, labels):
+        self._layout_busy = False
+        QApplication.restoreOverrideCursor()
+        self.layout_queue = items
+        self._apply_layout_pages(pages, labels, skipped, show=True)
 
     def _refresh_layout_thumbnails(self, pages):
         self.right_thumb.refresh_pages(pages)
@@ -2005,12 +2073,19 @@ class IDPhotoApp(QMainWindow):
             theme.info(self, "error", "保存失败", str(e))
 
     def on_export_all_layouts(self):
-        """把当前所有排版页一次性导出到所选文件夹（每页一个文件）。
+        """把所有排版页一次性导出到所选文件夹（后台线程，逐页回报进度）。
 
         与「保存排版图」的区别：那个只保存预览中的那一页，多页排版时要一页页点；
         这个按页序导出全部，命名 `排版图_01 / _02 / …`。
         输出格式 / DPI / KB 限制与单张导出共用同一套设置。
+
+        之前是同步写盘：真实照片的 PNG 编码比纯色图慢得多，几十页会让窗口
+        完全无响应（用户以为死机、关掉进程，结果一个文件都没留下）。
+        现在放到后台线程，并在写完后逐个校验文件是否真的存在。
+        同名文件不再弹阻塞确认框，自动加 `_2/_3` 后缀。
         """
+        if getattr(self, "_export_busy", False):
+            return
         if not self.layout_pages:
             theme.info(self, "warning", "提示",
                        "还没有排版图，请先在「排版规格」里点「排版」生成。")
@@ -2031,41 +2106,69 @@ class IDPhotoApp(QMainWindow):
         # KB 限制 > 0 时强制 jpg 并压缩到该体积；否则按所选输出格式
         ext = "jpg" if fmt == "jpg" or kb_limit > 0 else "png"
 
-        digits = max(2, len(str(len(self.layout_pages))))
-        targets = [os.path.join(folder, f"排版图_{i:0{digits}d}.{ext}")
-                   for i in range(1, len(self.layout_pages) + 1)]
+        pages = list(self.layout_pages)
+        digits = max(2, len(str(len(pages))))
+        targets = [self._unique_export_path(folder, f"排版图_{i:0{digits}d}", ext)
+                   for i in range(1, len(pages) + 1)]
 
-        # 批量覆盖是破坏性的：先数一下同名文件，有就统一确认一次
-        existing = [p for p in targets if os.path.exists(p)]
-        if existing:
-            box = QMessageBox(self)
-            box.setIcon(QMessageBox.Warning)
-            box.setWindowTitle("覆盖同名文件")
-            box.setText(
-                f"目标文件夹里已有 {len(existing)} 个同名文件，继续导出会覆盖它们。\n"
-                "确定继续？")
-            box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            box.button(QMessageBox.Yes).setText("覆盖")
-            box.button(QMessageBox.No).setText("取消")
-            if box.exec() != QMessageBox.Yes:
-                return
+        self._export_busy = True
+        total = len(pages)
+        self._set_status(f"正在导出排版图 0/{total}…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
 
-        saved, failed = 0, []
-        for out, page in zip(targets, self.layout_pages):
-            try:
-                if ext == "jpg":
-                    save_image_to_jpeg_kb(page, out, kb_limit, dpi)
-                else:
-                    save_image_with_dpi(page, out, dpi)
-                saved += 1
-            except Exception as e:
-                failed.append(f"{os.path.basename(out)}: {e}")
+        def _worker():
+            saved, failed = 0, []
+            for i, (out, page) in enumerate(zip(targets, pages), 1):
+                tmp_out = out + ".part"
+                try:
+                    # 先写 .part 再原子改名：中途被关进程也不会留下"半张图"
+                    if ext == "jpg":
+                        save_image_to_jpeg_kb(page, tmp_out, kb_limit, dpi)
+                    else:
+                        save_image_with_dpi(page, tmp_out, dpi)
+                    # 落盘校验：写入接口不报错但文件不存在/为空的坑要拦住
+                    if not os.path.isfile(tmp_out) or os.path.getsize(tmp_out) <= 0:
+                        raise IOError("文件没有写出来（可能被安全软件拦截）")
+                    os.replace(tmp_out, out)
+                    saved += 1
+                except Exception as e:  # noqa: BLE001 - 逐页收集，不中断整批
+                    failed.append(f"{os.path.basename(out)}: {e}")
+                    try:
+                        if os.path.exists(tmp_out):
+                            os.remove(tmp_out)
+                    except OSError:
+                        pass
+                self._safe_after(0, lambda i=i: self._set_status(
+                    f"正在导出排版图 {i}/{total}…"))
+            self._safe_after(0, lambda: self._on_export_layouts_done(
+                saved, failed, folder))
 
+        threading.Thread(target=_worker, daemon=True).start()
+
+    @staticmethod
+    def _unique_export_path(folder, stem, ext):
+        """同名时自动加 _2/_3 后缀，避免弹阻塞式覆盖确认。"""
+        path = os.path.join(folder, f"{stem}.{ext}")
+        n = 2
+        while os.path.exists(path) and n <= 999:
+            path = os.path.join(folder, f"{stem}_{n}.{ext}")
+            n += 1
+        return path
+
+    def _on_export_layouts_done(self, saved, failed, folder):
+        self._export_busy = False
+        QApplication.restoreOverrideCursor()
+        if saved == 0:
+            self._set_status("排版图导出失败")
+            detail = "\n".join(failed[:5]) if failed else "未知原因"
+            theme.info(self, "error", "导出失败",
+                       f"没有写出任何文件：\n{detail}\n\n目标文件夹：{folder}")
+            return
         self._set_status(f"已导出排版图 {saved} 张 → {folder}")
         if failed:
             theme.info(self, "warning", "部分导出失败",
                        f"成功 {saved} 张，失败 {len(failed)} 张：\n"
-                       + "\n".join(failed[:5]))
+                       + "\n".join(failed[:5]) + f"\n\n文件夹：{folder}")
         else:
             theme.info(self, "success", "导出完成",
                        f"已导出 {saved} 张排版图到:\n{folder}")
