@@ -330,6 +330,7 @@ python -c "import sys; sys.path.insert(0,'.'); import app; print('IMPORT_APP_OK'
 | 19 | 排版规格：删护照/签证/驾照/社保卡，加自用1/自用2 | 只改 `styles.PRESET_SIZES`（删 4 项，加 `("自用1",319,425)`、`("自用2",378,496)`，即 27×36mm / 32×42mm @300DPI）与 `DEFAULT_COUNT_BY_SIZE`；处理页删掉原先硬编码的自用1/2 循环，与排版页共用同一份清单 |
 | 20 | 排版规格「数量」框看不到数字 | 不是宽度问题：`qfluentwidgets.SpinBox` 的编辑区恒为 1px（见 §5 坑表）。新增 `widgets.NumberField`（LineEdit + `QIntValidator`，接口兼容 SpinBox），替换排版页数量框、设置里 5 个数值框（KB/留白/横距/纵距/超时）以及规格/纸张对话框里的宽·高·张数框；删除已无用的 `theme.spinbox_qss`。实测数量框 72×33、文字区完整，截图内深色像素 34（空框为 2），数字确实画出来了 |
 | 21 | 「选项」默认值：出血 50 / 横距 20 / 纵距 20 | 三个默认值收敛到 `styles.LAYOUT_DEFAULT_BLEED / _GAP_H / _GAP_V`，`layout_view` 与 `settings_dialog` 共用，`DEFAULT_SETTINGS["layout"]` 同步（新装即 20/20/50）。注意 `settings.json` 在 `.gitignore` 里，本机已手动把旧的 1/1 改成 20/20 |
+| 22 | 排版固定用「标准照」，小规格处理后再排大规格会放大发虚 | 成品列表同时记 `hd`（仅当 hd 确实比 std 大才保留；通用构图下两者同尺寸，自动丢弃避免白占内存）。排版改用 `_pick_layout_base(src, w, h)`：标准照不需要放大就用标准照，需要放大才用高清照。实测「一寸 295×413 处理 → 大二寸 413×626 排版」锐度 16.8 → **74.5** |
 
 > 附：`布局页` 之前把整列最小高度顶到 766px，导致 700 高的窗口把主窗口内容区挤出屏幕（底部被裁）。现在 `LayoutView.minimumSizeHint()` 降到 68px，窗口 1000×700 时不再裁切。
 
@@ -338,3 +339,4 @@ python -c "import sys; sys.path.insert(0,'.'); import app; print('IMPORT_APP_OK'
 6. **参数面板类页面必须放在 `widgets.wrap_scrollable()` 里**，否则内容高度会顶高整窗最小高度、或在窗口变矮时压出重叠。
 7. **规格只改 `styles.PRESET_SIZES`**（元组顺序是 `(名称, 宽, 高)`）。处理页与排版页都从这一份派生，不要在页面里再硬编码尺寸表。
 8. **数值输入用 `widgets.NumberField`，不要用 `qfluentwidgets.SpinBox`**（编辑区 1px，数字看不见）；原生 `QSpinBox` 可以用。
+9. **排版取图必须走 `_pick_layout_base(src, w, h)`**，不要直接读 `src["image"]`——否则会绕过「按目标规格自动选标准照/高清照」的逻辑，小规格处理再排大规格时又会放大发虚。

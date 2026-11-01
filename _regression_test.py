@@ -397,6 +397,39 @@ def test_layout_option_defaults(win):
         s.get("layout.default_gap_v", styles.LAYOUT_DEFAULT_GAP_V))
 
 
+def test_layout_picks_hd_by_target(win):
+    """排版按目标规格选图：标准照够大用标准照，需要放大才用高清照。"""
+    std = np.full((413, 295, 4), 120, dtype=np.uint8)    # 一寸（小）
+    hd = np.full((1037, 741, 4), 200, dtype=np.uint8)    # 高清（大）
+    src = {"image": std, "hd": hd, "matting": None}
+
+    # 目标 = 一寸：标准照正好，不需要放大 → 用 std
+    assert win._pick_layout_base(src, 295, 413) is std, "不需要放大时应该用标准照"
+    # 目标 = 大二寸 413×626：标准照要放大 1.5× → 用 hd
+    assert win._pick_layout_base(src, 413, 626) is hd, "需要放大时应该用高清照"
+    # 没有高清图 → 退回标准照，不能崩
+    assert win._pick_layout_base({"image": std, "hd": None}, 413, 626) is std
+
+    # 高清图不比标准照大时不应占内存（通用构图下两者同尺寸）
+    win.ready_photos = []
+    same = np.full((100, 80, 4), 90, dtype=np.uint8)
+    win._auto_import_ready(same, "", hd=same.copy())
+    assert win.ready_photos[-1]["hd"] is None, "hd 不大于 std 时不应保存"
+    win._auto_import_ready(std, "", hd=hd)          # std 小、hd 大 → 保留 hd
+    assert win.ready_photos[-1]["hd"] is hd, "更大的 hd 应该被保存"
+
+    # 端到端：用大二寸排版，取到的应该是 hd（填充值 200 而不是 std 的 120）
+    win.ready_photos = [{"name": "t.png", "path": "", "image": std,
+                         "matting": None, "hd": hd}]
+    win.layout_pane.mixed_items = [("大二寸", 413, 626, 1, "")]
+    assert win._rebuild_layout_from_sources(show=False), "排版生成失败"
+    mean = float(win.layout_queue[0].image.mean())
+    assert abs(mean - 200) < 2, f"排版没用到高清图（均值 {mean:.0f}，应为 200）"
+
+    win.ready_photos = []
+    win.layout_pane.mixed_items = []
+
+
 def test_defaults_and_dropdowns(win):
     """人脸旋转校正默认开启；两个页面下拉里的规格一致。"""
     pv = win.pages["process"]
@@ -439,6 +472,7 @@ def main():
         check("规格清单（删 4 项 / 加自用1、自用2）", test_preset_sizes)
         check("数量输入框可见（不用 SpinBox）", lambda: test_count_field_visible(win))
         check("选项默认值（出血50/横距20/纵距20）", lambda: test_layout_option_defaults(win))
+        check("排版按规格自动选高清图", lambda: test_layout_picks_hd_by_target(win))
         check("旋转校正默认开启 + 下拉一致",
               lambda: test_defaults_and_dropdowns(win))
     finally:
