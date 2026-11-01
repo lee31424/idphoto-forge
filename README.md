@@ -2,15 +2,24 @@
 
 > 一款**本地离线**运行的证件照制作软件，支持人像智能抠图、换底色、美颜、水印、标准/高清/透明底导出，以及 A4 多尺寸混排与一键打印。
 >
-> 基于开源项目 [HivisionIDPhotos](https://github.com/Zeyi-Lin/HivisionIDPhotos) 的算法思想二次开发，使用 **PySide6 + PyQt-Fluent-Widgets** 重写了现代化桌面界面，并对核心处理流水线做了独立验证与增强。
+> 基于开源项目 **[jintianjie/idphoto_app](https://github.com/jintianjie/idphoto_app)** 修改而来（其算法与模型又源自 [HivisionIDPhotos](https://github.com/Zeyi-Lin/HivisionIDPhotos)），使用 **PySide6 + PyQt-Fluent-Widgets** 构建桌面界面。
 >
-> 🔗 本项目开源地址：**https://github.com/jintianjie/idphoto_app**（免安装版见 [Releases](https://github.com/jintianjie/idphoto_app/releases)）
+> 🔗 上游项目地址：**https://github.com/jintianjie/idphoto_app**
+
+---
+
+## 🙋 关于本项目（作者自述）
+
+- 本项目是在 **[jintianjie/idphoto_app](https://github.com/jintianjie/idphoto_app)** 的基础上修改而来：调整了界面布局、排版规格、批量导入与导出流程，并修复了使用中遇到的一些问题。
+- 全程使用 **豆包（本地模式）** 与 **DSH** 辅助制作。
+- **作者对编程一窍不通**：代码由 AI 生成、按实际使用需求一点点调整和验证，因此难免有考虑不周或实现粗糙的地方，欢迎指出问题、也请多多包涵。
+- 如果你需要更完整、更新及时的上游版本，建议直接使用 [jintianjie/idphoto_app](https://github.com/jintianjie/idphoto_app)。
 
 ---
 
 ## 🌟 关于上游项目 HivisionIDPhotos
 
-本软件的核心抠图与人脸检测算法、所用模型，均来源于开源项目 **[HivisionIDPhotos](https://github.com/Zeyi-Lin/HivisionIDPhotos)**（作者 Zeyi Lin 与 SwanLab Team）：
+本软件的核心抠图与人脸检测算法、所用模型，均来源于开源项目 **[HivisionIDPhotos](https://github.com/Zeyi-Lin/HivisionIDPhotos)**（作者 Zeyi Lin 与 SwanLab Team），并经 [jintianjie/idphoto_app](https://github.com/jintianjie/idphoto_app) 桌面化封装后传递到本项目：
 
 > ⚡️ HivisionIDPhotos：一个轻量级的 AI 证件照制作算法（*a lightweight and efficient AI ID photos tool*）。
 
@@ -53,9 +62,11 @@
 
 ## 📥 免安装版（GitHub Release）
 
-不想装 Python 环境的用户，直接下载 **Releases** 页面提供的压缩包即可使用：
+> 下面引用的是**上游项目 [jintianjie/idphoto_app](https://github.com/jintianjie/idphoto_app) 的免安装包**（不含本项目的修改）。本仓库没有单独发布 Release，如需使用本项目的改动，请按「快速开始」从源码运行。
 
-1. 打开本项目的 [Releases](https://github.com/jintianjie/idphoto_app/releases) 页面，下载最新版的 `idphoto_app_dist.zip`（约 110 MB）。
+不想装 Python 环境的用户，可以直接使用上游的免安装包：
+
+1. 打开上游项目的 [Releases](https://github.com/jintianjie/idphoto_app/releases) 页面，下载最新版的 `idphoto_app_dist.zip`（约 110 MB）。
 2. **右键 → 全部解压缩**，解压到任意英文路径（如 `D:\idphoto\`）。
 3. 进入解压后的文件夹，双击 **`证件照制作工具.exe`** 即可运行（无需安装，无弹窗广告）。
 4. 首次使用：进入 **设置 → 模型下载**，点击「一键检查并下载」获取抠图模型（推荐 MODNet，约 25 MB）；下载完成后即可正常制作证件照。
@@ -421,9 +432,9 @@ build_exe.bat /clean       只清理构建缓存
 
 ## 📋 许可证
 
-本项目基于 [HivisionIDPhotos](https://github.com/Zeyi-Lin/HivisionIDPhotos) 二次开发，核心算法思想与部分模型来源于该项目及其依赖（MODNet / RetinaFace / BiRefNet / RMBG-1.4 / MTCNN）。
+本项目基于 [jintianjie/idphoto_app](https://github.com/jintianjie/idphoto_app) 修改而来，该项目又基于 [HivisionIDPhotos](https://github.com/Zeyi-Lin/HivisionIDPhotos) 二次开发；核心算法思想与部分模型来源于 HivisionIDPhotos 及其依赖（MODNet / RetinaFace / BiRefNet / RMBG-1.4 / MTCNN）。
 
-- **上游许可证**：HivisionIDPhotos 采用 **Apache License 2.0**。
+- **上游许可证**：jintianjie/idphoto_app 与 HivisionIDPhotos 均采用 **Apache License 2.0**。
 - **本项目许可证**：作为衍生作品，本项目沿用 **Apache License 2.0**，全文见仓库根目录 `LICENSE` 文件。
 
 > 依据 Apache 2.0 要求： redistributing 衍生作品须附带本许可证、保留原作者版权与署名声明，并标注对源文件的修改。请在分发本项目时遵守上述条款。
@@ -432,6 +443,7 @@ build_exe.bat /clean       只清理构建缓存
 
 ## 🙏 致谢
 
+- [jintianjie/idphoto_app](https://github.com/jintianjie/idphoto_app)（Apache 2.0）—— **本项目的直接基础**，界面与业务代码主要来自这里
 - [HivisionIDPhotos](https://github.com/Zeyi-Lin/HivisionIDPhotos)（Apache 2.0，作者 Zeyi Lin 与 SwanLab Team）—— 证件照算法与模型来源
 - [PyQt-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets) —— Fluent 风格 UI 组件
 - MODNet / RetinaFace / BiRefNet / RMBG-1.4 / MTCNN 等模型的原作者与发布者
