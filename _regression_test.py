@@ -177,6 +177,70 @@ def test_beauty_smooth_and_whiten():
         "透明区域被美白污染"
 
 
+def test_skin_tone_correction():
+    """肤色矫正：偏黄的皮肤应被拉回正常 B/G 比例。"""
+    from app import IDPhotoApp
+
+    def bg_ratio(pixel_bgr):
+        b, g, _r = [float(v) for v in pixel_bgr]
+        return b / max(g, 1.0)
+
+    normal = np.zeros((110, 90, 4), dtype=np.uint8)
+    normal[..., :3] = (63, 97, 134)     # 实测的正常肤色均值（BGR）
+    normal[..., 3] = 255
+    yellow = normal.copy()
+    yellow[..., :3] = (48, 102, 137)    # 偏黄：蓝通道偏低
+
+    base = bg_ratio(normal[50, 50, :3])
+    cast = bg_ratio(yellow[50, 50, :3])
+    fixed = bg_ratio(IDPhotoApp._apply_beauty_bgra(
+        yellow, {"smooth": 0, "whiten": 0, "correct": 10})[50, 50, :3])
+
+    assert cast < base * 0.95, f"样本本身不够偏黄: {cast:.3f} vs {base:.3f}"
+    assert abs(fixed - base) < abs(cast - base) * 0.5, \
+        f"校正不足: {cast:.3f} → {fixed:.3f}（目标 {base:.3f}）"
+
+    # 强度 0 = 关闭，必须逐位不变
+    off = IDPhotoApp._apply_beauty_bgra(
+        yellow, {"smooth": 0, "whiten": 0, "correct": 0})
+    assert np.array_equal(off, yellow), "强度 0 时不应改动"
+
+
+def test_process_one_applies_beauty_to_matting():
+    """抠图也要过美颜，否则排版页换底色会变回素颜。"""
+    from app import IDPhotoApp
+    from photo_processor import PhotoResult
+
+    rng = np.random.default_rng(3)
+    skin = np.full((90, 70, 3), (63, 97, 134), dtype=np.int16)
+    skin = np.clip(skin + rng.integers(-12, 13, skin.shape), 0, 255).astype(np.uint8)
+    bgra = np.zeros((90, 70, 4), dtype=np.uint8)
+    bgra[..., :3] = skin
+    bgra[..., 3] = 255
+
+    fake = PhotoResult(standard=bgra.copy(), hd=bgra.copy(),
+                       matting=bgra.copy(), face_info=None)
+    win = IDPhotoApp()
+    orig = win.photo_processor.process_id_photo
+    win.photo_processor.process_id_photo = lambda *a, **k: fake
+    try:
+        params = {
+            "size": None, "head_measure_ratio": 0.2, "head_height_ratio": 0.45,
+            "head_top_range": (0.12, 0.10), "face_confidence_threshold": 0.8,
+            "process_mode": "crop_bg", "face_alignment": False,
+            "beauty": {"smooth": 8, "whiten": 0, "correct": 0},
+        }
+        _std, _hd, mat_out = win._process_one(
+            np.zeros((100, 100, 3), np.uint8), params, (219, 142, 67), 0)
+    finally:
+        win.photo_processor.process_id_photo = orig
+        win._invoker.stop()
+
+    assert not np.array_equal(mat_out[..., :3], bgra[..., :3]), \
+        "抠图没有应用美颜（排版换底色会变回素颜）"
+    assert np.array_equal(mat_out[..., 3], bgra[..., 3]), "抠图 alpha 被改动"
+
+
 def test_batch_jpeg_format():
     from image_utils import save_image_to_jpeg_kb
 
@@ -746,6 +810,8 @@ def main():
         check("删除后可重新导入同一文件", lambda: test_readd_after_delete(win, app))
         check("美颜不污染背景色", test_beauty_keeps_background)
         check("磨皮/美白效果（降纹理/提亮）", test_beauty_smooth_and_whiten)
+        check("肤色矫正（偏黄拉回正常）", test_skin_tone_correction)
+        check("抠图也应用美颜（排版换底色）", test_process_one_applies_beauty_to_matting)
         check("批量导出 JPG 格式正确（含 KB=0）", test_batch_jpeg_format)
         check("中心渐变向量化（等价 + 提速）", test_gradient_equivalence_and_speed)
         check("实时预览单飞", lambda: test_live_preview_single_flight(win, app))

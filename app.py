@@ -1487,6 +1487,9 @@ class IDPhotoApp(QMainWindow):
         beauty = params.get("beauty", {})
         std_portrait = self._apply_beauty_bgra(result.standard, beauty)
         hd_portrait = self._apply_beauty_bgra(result.hd, beauty)
+        # 抠图也过一遍美颜：排版页「自定义背景」走的是 matting，不处理的话
+        # 换底色后的成品会变回素颜（磨皮/美白/肤色矫正全部丢失）。
+        matting_out = self._apply_beauty_bgra(result.matting, beauty)
         _report(0.6)
         standard_with_bg = add_background_to_image(std_portrait, bgr_color, render_mode)
         hd_with_bg = add_background_to_image(hd_portrait, bgr_color, render_mode)
@@ -1498,14 +1501,14 @@ class IDPhotoApp(QMainWindow):
         standard_with_bg = self._apply_watermark(standard_with_bg, params.get("watermark", {}))
         hd_with_bg = self._apply_watermark(hd_with_bg, params.get("watermark", {}))
         _report(1.0)
-        return standard_with_bg, hd_with_bg, result.matting
+        return standard_with_bg, hd_with_bg, matting_out
 
     @staticmethod
     def _beauty_active(beauty):
         """美颜参数是否有任何一项非 0（全 0 时跳过，省掉整图运算）。"""
         if not beauty:
             return False
-        for k in ("smooth", "whiten"):
+        for k in ("smooth", "whiten", "correct"):
             try:
                 if float(beauty.get(k, 0) or 0) != 0:
                     return True

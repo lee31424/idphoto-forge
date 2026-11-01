@@ -207,8 +207,15 @@ def _generate_gradient(start_bgr: tuple, width: int, height: int, mode: str = "u
 
 
 # ============================================================
-#  美颜处理（磨皮 + 美白，只作用于皮肤）
+#  美颜处理（磨皮 + 美白 + 肤色矫正，只作用于皮肤）
 # ============================================================
+
+# 正常肤色参考比例（由样张标定；用比例而非绝对值，避免把人“调亮/调暗”）
+_SKIN_REF_BG = 0.657   # B / G
+_SKIN_REF_RG = 1.390   # R / G
+_SKIN_GAIN_MIN = 0.80  # 单通道增益下限，防止过度校正
+_SKIN_GAIN_MAX = 1.40
+
 
 # 人像抠图后的「透明像素」没有真实颜色，肤色检测要排除这些区域，
 # 避免把边缘的杂色当成皮肤一起处理。
@@ -226,14 +233,47 @@ def _skin_mask(image_bgr: np.ndarray) -> np.ndarray:
     return mask.astype(np.float32) / 255.0
 
 
-def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
-    """美颜：磨皮 + 美白，只处理皮肤区域。
+def _apply_skin_tone(image_bgr: np.ndarray, mask: np.ndarray, strength: int) -> np.ndarray:
+    """肤色矫正：按皮肤区域估计偏色，算 RGB 增益后校正整张人像。
 
-    params: {"smooth": 0~10, "whiten": 0~10}
+    只在皮肤上「测光」，但把增益应用到整张人像——这样脸、脖子、头发、
+    衣服的颜色关系保持一致；背景是后期合成的，不受影响。
+
+    判定依据是 B/G、R/G 两个比例（与亮度无关）：
+        偏黄 → B/G 变小；偏绿/偏蓝 → R/G、B/G 同时偏小
+    """
+    if strength <= 0:
+        return image_bgr
+    selected = mask > 0.35
+    area = int(selected.sum())
+    if area < max(50, int(0.002 * selected.size)):   # 皮肤太少，估计不可靠
+        return image_bgr
+
+    mean_b, mean_g, mean_r = image_bgr[selected].mean(axis=0)
+    if mean_g < 1.0:
+        return image_bgr
+
+    gain_b = _SKIN_REF_BG * mean_g / max(float(mean_b), 1.0)
+    gain_r = _SKIN_REF_RG * mean_g / max(float(mean_r), 1.0)
+    gains = np.clip([gain_b, 1.0, gain_r], _SKIN_GAIN_MIN, _SKIN_GAIN_MAX)
+
+    t = min(max(strength, 0), 10) / 10.0
+    gains = 1.0 + (gains - 1.0) * t
+
+    lut = [np.clip(np.arange(256, dtype=np.float32) * g, 0, 255).astype(np.uint8)
+           for g in gains]
+    return cv2.merge([cv2.LUT(image_bgr[:, :, i], lut[i]) for i in range(3)])
+
+
+def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
+    """美颜：磨皮 + 肤色矫正 + 美白，只处理皮肤（矫正作用于整张人像）。
+
+    params: {"smooth": 0~10, "whiten": 0~10, "correct": 0~10}
     alpha:  可选，uint8 人像透明度（BGRA 的 A 通道）；传入后效果只落在人像内，
             透明背景不会被误处理。
 
     磨皮 = 双边滤波（保边）+ 回加 35% 高频细节，避免"塑料脸"；
+    肤色矫正 = 皮肤测光 → RGB 增益 → 整张人像校色；
     美白 = 在 LAB 的 L 通道提亮、轻微去黄，比 RGB 直接加亮度更自然。
     """
     if image_bgr is None or image_bgr.size == 0:
@@ -243,7 +283,8 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
 
     smooth = int(params.get("smooth", 0) or 0)
     whiten = int(params.get("whiten", 0) or 0)
-    if smooth <= 0 and whiten <= 0:
+    correct = int(params.get("correct", 0) or 0)
+    if smooth <= 0 and whiten <= 0 and correct <= 0:
         return image_bgr
 
     mask = _skin_mask(image_bgr)
@@ -251,6 +292,10 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
         mask = mask * (alpha.astype(np.float32) / 255.0)
     if float(mask.max()) <= 0.01:
         return image_bgr
+
+    # 肤色矫正是整图增益，放在磨皮/美白之前（先把色相拉正，再提亮）
+    if correct > 0:
+        image_bgr = _apply_skin_tone(image_bgr, mask, correct)
 
     # 只在「皮肤包围盒」里做浮点运算：整张图算会多花 3 倍时间，
     # 而皮肤通常只占画面一小块。pad 给滤波留一点上下文，避免边缘接缝。

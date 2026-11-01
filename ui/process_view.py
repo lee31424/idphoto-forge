@@ -20,6 +20,7 @@ from styles import (
     RENDER_MODES, MATTING_MODELS, FACE_MODELS, PRESET_COLORS, PROCESS_MODES,
     DEFAULT_BG_COLOR, DEFAULT_WATERMARK_COLOR, PRESET_SIZES, PRINT_DPI,
     BEAUTY_MAX, BEAUTY_DEFAULT_SMOOTH, BEAUTY_DEFAULT_WHITEN,
+    BEAUTY_DEFAULT_CORRECT,
 )
 from color_utils import hex_to_rgb_tuple
 
@@ -317,14 +318,20 @@ class ProcessView(QWidget):
         v.setSpacing(12)
 
         beauty_card = widgets.CardSection("美颜参数")
-        # 只保留「磨皮 + 美白」：效果都只作用在皮肤上（肤色遮罩 + 人像 alpha），
-        # 不再提供亮度/对比/饱和/锐化——那些属于调色，会把底色和衣服一起改掉。
+        # 只保留「磨皮 / 美白 / 肤色矫正」：
+        # 三者都基于皮肤遮罩（+人像 alpha），不再提供亮度/对比/饱和/锐化——
+        # 那些属于全局调色，会把底色和衣服一起改掉。
         self.smooth_row = widgets.SliderRow(
             "磨皮", 0, BEAUTY_MAX, 1, BEAUTY_DEFAULT_SMOOTH, 0)
         beauty_card.addWidget(self.smooth_row)
         self.whiten_row = widgets.SliderRow(
             "美白", 0, BEAUTY_MAX, 1, BEAUTY_DEFAULT_WHITEN, 0)
         beauty_card.addWidget(self.whiten_row)
+        self.correct_row = widgets.SliderRow(
+            "肤色矫正", 0, BEAUTY_MAX, 1, BEAUTY_DEFAULT_CORRECT, 0)
+        self.correct_row.setToolTip(
+            "按皮肤估计偏色并校正：偏黄 / 偏绿 / 偏蓝都能拉回；0 = 关闭")
+        beauty_card.addWidget(self.correct_row)
 
         self.reset_beauty_btn = PushButton("重置美颜")
         self.reset_beauty_btn.clicked.connect(lambda: self._reset_beauty())
@@ -332,7 +339,7 @@ class ProcessView(QWidget):
         v.addWidget(beauty_card)
 
         # 美颜滑块实时预览联动（与高级参数同一套防抖）
-        for r in (self.smooth_row, self.whiten_row):
+        for r in (self.smooth_row, self.whiten_row, self.correct_row):
             r.valueChanged.connect(self._schedule_live_preview)
 
         v.addStretch(1)
@@ -571,6 +578,7 @@ class ProcessView(QWidget):
     def _reset_beauty(self):
         self.smooth_row.set_value(BEAUTY_DEFAULT_SMOOTH)
         self.whiten_row.set_value(BEAUTY_DEFAULT_WHITEN)
+        self.correct_row.set_value(BEAUTY_DEFAULT_CORRECT)
 
     def set_model_status(self, text, missing=False):
         """更新模型就绪状态。
@@ -668,9 +676,10 @@ class ProcessView(QWidget):
             return {
                 "smooth": int(self.smooth_row.value()),
                 "whiten": int(self.whiten_row.value()),
+                "correct": int(self.correct_row.value()),
             }
         except (ValueError, TypeError):
-            return {"smooth": 0, "whiten": 0}
+            return {"smooth": 0, "whiten": 0, "correct": 0}
 
     def get_watermark_params(self):
         try:

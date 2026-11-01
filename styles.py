@@ -217,6 +217,7 @@ DEFAULT_WATERMARK_COLOR = "#FFFFFF"
 BEAUTY_MAX = 10             # 滑块上限（0~10）
 BEAUTY_DEFAULT_SMOOTH = 3   # 磨皮默认强度
 BEAUTY_DEFAULT_WHITEN = 0   # 美白默认强度
+BEAUTY_DEFAULT_CORRECT = 3  # 肤色矫正默认强度
 
 # ============================================================
 #  渲染模式
