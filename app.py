@@ -1508,7 +1508,7 @@ class IDPhotoApp(QMainWindow):
         """美颜参数是否有任何一项非 0（全 0 时跳过，省掉整图运算）。"""
         if not beauty:
             return False
-        for k in ("smooth", "whiten", "correct"):
+        for k in ("smooth", "whiten", "correct", "even"):
             try:
                 if float(beauty.get(k, 0) or 0) != 0:
                     return True

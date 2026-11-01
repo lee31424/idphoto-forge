@@ -206,6 +206,34 @@ def test_skin_tone_correction():
     assert np.array_equal(off, yellow), "强度 0 时不应改动"
 
 
+def test_skin_even():
+    """颜色均衡：脸上的大块红/白色斑应被压平，均值基本不变。"""
+    from app import IDPhotoApp
+
+    bgra = np.zeros((200, 200, 4), dtype=np.uint8)
+    bgra[..., :3] = (63, 97, 134)            # 正常肤色
+    bgra[60:140, 40:160, :3] = (40, 80, 160)  # 一块偏红的色斑
+    bgra[..., 3] = 255
+
+    def lab_a(im):
+        return cv2.cvtColor(im[..., :3], cv2.COLOR_BGR2LAB)[..., 1].astype(np.float32)
+
+    a0 = lab_a(bgra)
+    out = IDPhotoApp._apply_beauty_bgra(
+        bgra, {"smooth": 0, "whiten": 0, "correct": 0, "even": 10})
+    a1 = lab_a(out)
+
+    assert a1.std() < a0.std() * 0.6, \
+        f"色斑没被压平: std {a0.std():.1f} → {a1.std():.1f}"
+    assert abs(a1.mean() - a0.mean()) < 3.0, \
+        f"整体色相被改变: mean {a0.mean():.1f} → {a1.mean():.1f}"
+    assert np.array_equal(out[..., 3], bgra[..., 3]), "alpha 被改动"
+
+    off = IDPhotoApp._apply_beauty_bgra(
+        bgra, {"smooth": 0, "whiten": 0, "correct": 0, "even": 0})
+    assert np.array_equal(off, bgra), "强度 0 时不应改动"
+
+
 def test_process_one_applies_beauty_to_matting():
     """抠图也要过美颜，否则排版页换底色会变回素颜。"""
     from app import IDPhotoApp
@@ -811,6 +839,7 @@ def main():
         check("美颜不污染背景色", test_beauty_keeps_background)
         check("磨皮/美白效果（降纹理/提亮）", test_beauty_smooth_and_whiten)
         check("肤色矫正（偏黄拉回正常）", test_skin_tone_correction)
+        check("颜色均衡（压平色斑）", test_skin_even)
         check("抠图也应用美颜（排版换底色）", test_process_one_applies_beauty_to_matting)
         check("批量导出 JPG 格式正确（含 KB=0）", test_batch_jpeg_format)
         check("中心渐变向量化（等价 + 提速）", test_gradient_equivalence_and_speed)

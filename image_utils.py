@@ -265,14 +265,60 @@ def _apply_skin_tone(image_bgr: np.ndarray, mask: np.ndarray, strength: int) -> 
     return cv2.merge([cv2.LUT(image_bgr[:, :, i], lut[i]) for i in range(3)])
 
 
+def _apply_skin_even(image_bgr: np.ndarray, mask: np.ndarray, strength: int) -> np.ndarray:
+    """面部颜色均衡：压平皮肤色度的「低频起伏」（红一块、白一块）。
+
+    做法：在 LAB 的 a/b 通道里，用大尺度高斯提取低频色斑，
+    再把低频相对皮肤均值的偏离按强度压回去——高频纹理（毛孔、细纹）保持不动。
+    低频用「遮罩加权模糊」（分子分母都模糊）计算，避免头发/背景把脸边缘带脏。
+    """
+    if strength <= 0:
+        return image_bgr
+    if float(mask.sum()) < 50:
+        return image_bgr
+
+    height, width = image_bgr.shape[:2]
+    m = mask.astype(np.float32)
+    m_sum = float(m.sum())
+    if m_sum < 50:
+        return image_bgr
+
+    # 低频信息不需要全分辨率：缩小 4 倍再模糊，速度快一个数量级
+    scale = 4
+    sw, sh = max(8, width // scale), max(8, height // scale)
+    small = cv2.resize(image_bgr, (sw, sh), interpolation=cv2.INTER_AREA)
+    m_small = cv2.resize(m, (sw, sh), interpolation=cv2.INTER_AREA)
+    sigma = max(2.0, min(height, width) * 0.02 / scale)   # 约脸宽的 2%
+    denom = cv2.GaussianBlur(m_small, (0, 0), sigma) + 1e-6
+
+    lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB).astype(np.float32)
+    lab_small = cv2.cvtColor(small, cv2.COLOR_BGR2LAB).astype(np.float32)
+    k = min(max(strength, 0), 10) / 10.0 * 0.8
+    for ch in (1, 2):                              # a（红绿）、b（黄蓝）
+        value = lab[:, :, ch]
+        mean = float((value * m).sum()) / m_sum
+        low_small = cv2.GaussianBlur(lab_small[:, :, ch] * m_small, (0, 0), sigma) / denom
+        low = cv2.resize(low_small, (width, height), interpolation=cv2.INTER_LINEAR)
+        lab[:, :, ch] = value - k * (low - mean)
+
+    evened = cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8),
+                          cv2.COLOR_LAB2BGR).astype(np.float32)
+    original = image_bgr.astype(np.float32)
+    # 只在遮罩内替换；LAB 往返的 ±1 误差在遮罩外被丢掉
+    out = np.where(mask[..., None] > 0.004,
+                   np.clip(evened, 0, 255), original).astype(np.uint8)
+    return out
+
+
 def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
     """美颜：磨皮 + 肤色矫正 + 美白，只处理皮肤（矫正作用于整张人像）。
 
-    params: {"smooth": 0~10, "whiten": 0~10, "correct": 0~10}
+    params: {"smooth": 0~10, "whiten": 0~10, "correct": 0~10, "even": 0~10}
     alpha:  可选，uint8 人像透明度（BGRA 的 A 通道）；传入后效果只落在人像内，
             透明背景不会被误处理。
 
-    磨皮 = 双边滤波（保边）+ 回加 35% 高频细节，避免"塑料脸"；
+    磨皮 = 半分辨率双边滤波（保边）+ 回加 25% 高频细节，避免"塑料脸"；
+    颜色均衡 = 压平皮肤色度的低频起伏（红一块白一块），保留高频纹理；
     肤色矫正 = 皮肤测光 → RGB 增益 → 整张人像校色；
     美白 = 在 LAB 的 L 通道提亮、轻微去黄，比 RGB 直接加亮度更自然。
     """
@@ -284,7 +330,8 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
     smooth = int(params.get("smooth", 0) or 0)
     whiten = int(params.get("whiten", 0) or 0)
     correct = int(params.get("correct", 0) or 0)
-    if smooth <= 0 and whiten <= 0 and correct <= 0:
+    even = int(params.get("even", 0) or 0)
+    if smooth <= 0 and whiten <= 0 and correct <= 0 and even <= 0:
         return image_bgr
 
     mask = _skin_mask(image_bgr)
@@ -293,7 +340,9 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
     if float(mask.max()) <= 0.01:
         return image_bgr
 
-    # 肤色矫正是整图增益，放在磨皮/美白之前（先把色相拉正，再提亮）
+    # 先均匀色斑，再校色相，最后磨皮/提亮
+    if even > 0:
+        image_bgr = _apply_skin_even(image_bgr, mask, even)
     if correct > 0:
         image_bgr = _apply_skin_tone(image_bgr, mask, correct)
 
