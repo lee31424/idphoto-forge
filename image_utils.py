@@ -253,6 +253,38 @@ def _top_skin_component(mask: np.ndarray) -> np.ndarray:
     return mask * keep
 
 
+def _refine_skin_by_color(image_bgr: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """排除「白色/浅色衣物」这类假肤色（如暖白衣领）。
+
+    只用饱和度 + 亮度判断：衣领是**低饱和 + 比皮肤更亮**的区域；
+    而脸上的红斑/色块是高饱和的（要保留给颜色均衡处理），不会被误杀。
+    所以这里只削「低饱和且明显更亮」的像素，不碰皮肤上的颜色差异。
+    """
+    selected = mask > 0.5
+    if int(selected.sum()) < 100:
+        return mask
+
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+    lab_l = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)[:, :, 0].astype(np.float32)
+    sat = hsv[:, :, 1]
+
+    # 参考亮度只取「连通块上半部分」（脸），否则衣领占比大时会把参考值拉高，
+    # 导致衣领被判成“和皮肤一样亮”而漏过
+    rows = np.nonzero(selected)[0]
+    y_top, y_bottom = int(rows.min()), int(rows.max())
+    face_limit = y_top + max(1, int((y_bottom - y_top) * 0.4))
+    face_sel = selected.copy()
+    face_sel[face_limit + 1:, :] = False
+    if int(face_sel.sum()) < 50:
+        face_sel = selected
+    ref_l = float(np.median(lab_l[face_sel]))
+
+    white_like = 1.0 - np.clip((sat - 35.0) / 20.0, 0.0, 1.0)   # 低饱和 → 像白色
+    brighter = np.clip((lab_l - (ref_l + 20.0)) / 20.0, 0.0, 1.0)  # 明显比皮肤亮
+    keep = 1.0 - white_like * brighter
+    return mask * keep
+
+
 def _apply_skin_tone(image_bgr: np.ndarray, mask: np.ndarray, strength: int) -> np.ndarray:
     """肤色矫正：按皮肤区域估计偏色，算 RGB 增益后校正整张人像。
 
@@ -363,8 +395,14 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
     if float(mask.max()) <= 0.01:
         return image_bgr
 
-    # 高光压制只针对脸：限制到「最上方皮肤连通块」，避免暖白衣服被一起压暗
-    face_mask = _top_skin_component(mask) if highlight > 0 else mask
+    # 两道筛选把「假肤色」挡在美颜之外（暖白衣领、米色背景、浅色衣服）：
+    #   1) 只保留最上方的皮肤连通块（脸+脖子），排除画面下方的衣服；
+    #   2) 按脸部颜色做色度一致性过滤，排除连在脖子上的浅色衣领。
+    work_mask = _top_skin_component(mask)
+    work_mask = _refine_skin_by_color(image_bgr, work_mask)
+    if float(work_mask.max()) <= 0.01:
+        work_mask = mask
+    mask = work_mask
 
     # 先均匀色斑，再校色相，最后磨皮/提亮
     if even > 0:
@@ -385,7 +423,6 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
     x1 = min(width, int(xs.max()) + 1 + pad)
     roi = image_bgr[y0:y1, x0:x1]
     roi_mask = mask[y0:y1, x0:x1]
-    roi_face = face_mask[y0:y1, x0:x1]
 
     result = roi.astype(np.float32)
 
@@ -410,7 +447,7 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
         lab = cv2.cvtColor(np.clip(result, 0, 255).astype(np.uint8),
                            cv2.COLOR_BGR2LAB).astype(np.float32)
         lightness = lab[:, :, 0]
-        sel = roi_face > 0.5
+        sel = roi_mask > 0.5
         if int(sel.sum()) >= 50:
             # 以「皮肤均值 + 0.8σ」为高光起点：只压明显高出正常肤色的反光，
             # 不会把整张脸压暗；用均值/标准差比高分位更抗“大面积亮区”。
@@ -420,7 +457,7 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
             w = np.clip((lightness - cap) / 30.0, 0.0, 1.0)   # 30 灰阶平滑过渡
             w = cv2.GaussianBlur(w, (0, 0), 3.0)
             k = min(max(highlight, 0), 10) / 10.0 * 0.9
-            lab[:, :, 0] = lightness - k * (roi_face * w) * (lightness - cap)
+            lab[:, :, 0] = lightness - k * (roi_mask * w) * (lightness - cap)
             result = cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8),
                                   cv2.COLOR_LAB2BGR).astype(np.float32)
 
