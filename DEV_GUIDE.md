@@ -335,7 +335,7 @@ python -c "import sys; sys.path.insert(0,'.'); import app; print('IMPORT_APP_OK'
 | 24 | 排版纸张默认是 A4 | 新增 `styles.DEFAULT_PAPER = "6寸相纸"`（152×102mm，冲印最常用），`layout_view._load_custom_paper_presets` 用它预选；默认画布 1795×1205。方向单选补了提示：「纵向 = 按纸张定义方向，横向 = 旋转 90°」——6 寸本身就是横向，所以默认「纵向」得到的正是常规 6 寸画布 |
 | 25 | 生成排版 / 导出全部排版图 时软件假死；导出的文件夹里没有文件 | 两个操作都改到**后台线程**：状态栏显示「正在生成/导出 i/N」、等待光标、`_layout_busy` / `_export_busy` 防重入；导出**开始前先探测文件夹可写**，逐页**先写 `.part` 再原子改名**，`.part` 校验失败会自动回退为直接写目标文件，两条路都失败才报错；失败信息带真实异常，并写入 `%LOCALAPPDATA%\证件照制作工具\export_debug.log`；同名文件自动加 `_2/_3` 后缀。根因：真实照片 PNG 编码约 **190ms/页**，105 页 ≈ 20s，之前全跑在 UI 线程上，用户以为死机直接关进程，文件自然没写出来 |
 | 26 | 成品证件照只能一张张导入；排版规格每次都要手选规格/背景/数量 | ① 成品卡片改两行按钮：**导入图片 / 导入文件夹**（后台线程加载、跳过已存在、忽略非图片，`_ready_import_busy` 防重入）；② 排版规格新增快捷行：**自用2 ×8**、**自用1 ×9**（背景默认），一键入清单（`_quick_add_mixed`）；③ 清单文字缩短 + 省略号 + tooltip，去掉窄栏里的横向滚动条 |
-| 27 | 排好的多页分不清哪页是哪张成品 | 每页右下角画来源标注 `上级目录\文件名`（如 `导出测试\_F8A4960.jpg`）：`LayoutItem.source` 由 `_source_display_label()` 从成品路径生成 → `LayoutEngine.last_page_sources` 记录每页来源 → `_compute_layout_pages` 调 `image_utils.draw_bottom_right_label()` 逐页绘制（半透明白底 + 深灰字，msyh 字体，只处理右下角 ROI）。一页混多张时列前 2 个，超过 3 个用「首个 等N个」。标注烘焙进页面，预览/导出/打印一致 |
+| 27 | 排好的多页分不清哪页是哪张成品 | 每页右下角画来源标注 `最近两级目录\文件名`（如 `导出测试\批次A\_F8A4960.jpg`，只有一级目录时自动降为 `导出测试\_F8A4960.jpg`）：`LayoutItem.source` 由 `_source_display_label(levels=2)` 从成品路径生成 → `LayoutEngine.last_page_sources` 记录每页来源 → `_compute_layout_pages` 调 `image_utils.draw_bottom_right_label()` 逐页绘制（半透明白底 + 深灰字，msyh 字体，只处理右下角 ROI，超长文本从头部截断保留文件名）。一页混多张时列前 2 个，超过 3 个用「首个 等N个」。标注烘焙进页面，预览/导出/打印一致 |
 
 > 附：`布局页` 之前把整列最小高度顶到 766px，导致 700 高的窗口把主窗口内容区挤出屏幕（底部被裁）。现在 `LayoutView.minimumSizeHint()` 降到 68px，窗口 1000×700 时不再裁切。
 

@@ -1631,17 +1631,27 @@ class IDPhotoApp(QMainWindow):
     #  排版
     # ----------------------------------------------------------
     @staticmethod
-    def _source_display_label(item):
-        """页角标注用的来源名：上级目录名 + 文件名。
+    def _source_display_label(item, levels=2):
+        """页角标注用的来源名：最近 N 级目录名 + 文件名。
 
-        例：I:\\导出测试\\_F8A4960.jpg → "导出测试\\_F8A4960.jpg"。
+        实际使用中文件常有两级目录，例如：
+            I:\\导出测试\\批次A\\_F8A4960.jpg
+            → "导出测试\\批次A\\_F8A4960.jpg"
+        只有一级目录时保持原样：
+            I:\\导出测试\\_F8A4960.jpg → "导出测试\\_F8A4960.jpg"
         没有路径（例如只在内存里处理的图）时退回名称。
         """
         path = item.get("path") or ""
         if path:
-            parent = os.path.basename(os.path.dirname(path))
-            name = os.path.basename(path)
-            return f"{parent}\\{name}" if parent else name
+            norm = os.path.normpath(path)
+            parts = [p for p in norm.split(os.sep) if p]
+            if parts:
+                name = parts[-1]
+                # 过滤盘符（"I:"）与 UNC 的服务器名，只取真实目录层
+                dirs = [d for d in parts[:-1] if not d.endswith(":")]
+                picked = dirs[-levels:] if levels > 0 else []
+                return "\\".join(picked + [name])
+            return item.get("name") or ""
         return item.get("name") or ""
 
     def _collect_layout_source_photos(self):

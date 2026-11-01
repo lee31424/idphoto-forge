@@ -440,10 +440,17 @@ def test_layout_page_label(win):
     try:
         assert appmod.IDPhotoApp._source_display_label(
             {"path": r"I:\导出测试\_F8A4960.jpg"}) == r"导出测试\_F8A4960.jpg"
+        # 两级目录：带上最近两级
+        assert appmod.IDPhotoApp._source_display_label(
+            {"path": r"I:\导出测试\批次A\_F8A4960.jpg"}) == \
+            r"导出测试\批次A\_F8A4960.jpg"
+        # 只有盘符（无目录）时只留文件名
+        assert appmod.IDPhotoApp._source_display_label(
+            {"path": r"I:\a.jpg"}) == "a.jpg"
 
         std = np.full((413, 295, 4), 120, dtype=np.uint8)
         win.ready_photos = [{"name": "_F8A4960.jpg",
-                             "path": r"I:\导出测试\_F8A4960.jpg",
+                             "path": r"I:\导出测试\批次A\_F8A4960.jpg",
                              "image": std, "matting": None, "hd": None}]
         win.layout_pane.mixed_items = [("自用2", 378, 496, 8, "")]
         assert win._rebuild_layout_from_sources(show=False)

@@ -54,11 +54,24 @@ def draw_bottom_right_label(image_bgr, text, margin=18, font_size=None,
     font = _get_cjk_font(size)
 
     # 量文字尺寸（textbbox 的 left/top 可能非 0，绘制时要减掉）
-    probe = Image.new("RGB", (1, 1))
-    bbox = ImageDraw.Draw(probe).textbbox((0, 0), text, font=font)
-    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
     pad_x = max(6, size // 3)
     pad_y = max(3, size // 6)
+    probe = Image.new("RGB", (1, 1))
+    measure = ImageDraw.Draw(probe)
+
+    def _measure(t):
+        bb = measure.textbbox((0, 0), t, font=font)
+        return bb, bb[2] - bb[0], bb[3] - bb[1]
+
+    bbox, text_w, text_h = _measure(text)
+    # 两级目录 + 长文件名可能超出页宽：从头部截断，保留文件名部分
+    max_text_w = max(40, width - 2 * margin - 2 * pad_x)
+    if text_w > max_text_w:
+        while len(text) > 3 and font.getlength("…" + text) > max_text_w:
+            text = text[1:]
+        text = "…" + text
+        bbox, text_w, text_h = _measure(text)
+
     box_w = min(width, text_w + pad_x * 2)
     box_h = min(height, text_h + pad_y * 2)
 
