@@ -167,6 +167,9 @@ DEFAULT_SETTINGS = {
     "download": {
         "remember_password": False,         # 是否记住高速下载密码（仅会话内）
     },
+    "storage": {
+        "cache_dir": "",                    # 结果缓存目录（空 = 系统临时目录）
+    },
 }
 
 

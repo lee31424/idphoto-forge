@@ -20,10 +20,11 @@ from collections import OrderedDict
 class ResultStore:
     """一次运行一个临时目录；退出时整体删除。"""
 
-    def __init__(self, max_cached=3, root=None):
-        base = os.environ.get("IDPHOTO_RESULT_CACHE")
-        self.root = root or os.path.join(
-            base or tempfile.gettempdir(), "idphoto_results", uuid.uuid4().hex[:8])
+    def __init__(self, max_cached=3, cache_root=None):
+        """cache_root: 自定义缓存根目录（空 = 环境变量 / 系统临时目录）。"""
+        base = (cache_root or os.environ.get("IDPHOTO_RESULT_CACHE")
+                or tempfile.gettempdir())
+        self.root = os.path.join(base, "idphoto_results", uuid.uuid4().hex[:8])
         os.makedirs(self.root, exist_ok=True)
         self._cache = OrderedDict()
         self._max = int(max_cached)

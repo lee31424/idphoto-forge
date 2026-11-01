@@ -13,6 +13,8 @@ UI 与代码分离：
 import os
 import sys
 import time
+import shutil
+import tempfile
 import threading
 import queue
 import functools
@@ -239,7 +241,9 @@ class IDPhotoApp(QMainWindow):
         # 3000 张 × 18MB ≈ 54GB，全留内存会直接 OOM。
         from core.result_store import ResultStore
         ResultStore.cleanup_stale()
-        self._result_store = ResultStore()
+        self._result_stores = []          # 所有创建过的缓存目录（切换目录后退出统一清理）
+        self._result_store = self._make_result_store()
+        self._result_stores.append(self._result_store)
         self._imported_paths = set()    # 已导入路径（规范化），O(1) 去重
         self._import_thread = None      # 后台导入线程
         # 原图 LRU 缓存：只保留最近用到的几张全分辨率原图。
@@ -295,6 +299,8 @@ class IDPhotoApp(QMainWindow):
         # 启动只刷新「内嵌状态」(红/绿点 + 处理页缺失红字)，不再弹缺失询问框。
         QTimer.singleShot(150, self._update_model_status)
         QTimer.singleShot(200, self.start_refresh_printers)
+        # 缓存盘默认在系统盘：空间不足时提示一次（可在设置 → 存储里改）
+        QTimer.singleShot(1200, self._maybe_warn_cache_disk)
         self._update_model_status()
 
     # ----------------------------------------------------------
@@ -1268,9 +1274,38 @@ class IDPhotoApp(QMainWindow):
                                self.current_image_idx, bgr_color, render_mode),
                          daemon=True).start()
 
+    def _check_batch_cache_space(self):
+        """批量前检查缓存盘空间，不足时提醒（避免跑一半失败）。"""
+        n = len(self.batch_images)
+        if n <= 0:
+            return True
+        need_gb = n * 5.0 / 1024 * 1.5      # 实测约 4.77MB/张，再留 50% 余量
+        try:
+            free_gb = shutil.disk_usage(self._result_store.root).free / 1024 ** 3
+        except Exception:
+            return True
+        if free_gb >= need_gb:
+            return True
+        base = os.path.dirname(os.path.dirname(self._result_store.root))
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Warning)
+        box.setWindowTitle("缓存盘空间不足")
+        box.setText(
+            f"本次 {n} 张，结果缓存约需 {need_gb:.1f} GB，"
+            f"当前缓存盘只剩 {free_gb:.1f} GB。\n\n"
+            f"缓存目录：{base}\n\n"
+            "建议到「设置 → 存储」把缓存目录改到空间更大的磁盘，"
+            "或减少这一批的张数。\n\n仍要继续吗？")
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.button(QMessageBox.Yes).setText("继续")
+        box.button(QMessageBox.No).setText("取消")
+        return box.exec() == QMessageBox.Yes
+
     def on_batch_process(self):
         params = self._prepare_process(require_selection=False)
         if params is None:
+            return
+        if not self._check_batch_cache_space():
             return
         self._show_page("process")
         self._start_processing("批量处理中...")
@@ -1389,6 +1424,72 @@ class IDPhotoApp(QMainWindow):
                                    if v is not None})
         self.processed_results[idx] = res
         return res
+
+    # ----------------------------------------------------------
+    #  结果缓存目录（可在设置里自定义）
+    # ----------------------------------------------------------
+    def _cache_root_setting(self):
+        try:
+            return (self._settings.get("storage.cache_dir", "") or "").strip() or None
+        except Exception:
+            return None
+
+    def _make_result_store(self):
+        from core.result_store import ResultStore
+        return ResultStore(cache_root=self._cache_root_setting())
+
+    def _switch_cache_dir(self, path, persist=True):
+        """切换缓存目录并立即生效。
+
+        旧目录里已落盘的结果仍可读（StoredResult 持有原 store），
+        退出时会把本次运行创建过的所有目录一起清掉。
+        """
+        path = (path or "").strip()
+        base = path or tempfile.gettempdir()
+        if path:
+            try:
+                os.makedirs(path, exist_ok=True)
+            except OSError as e:
+                return False, f"无法创建目录：{e}"
+        probe = os.path.join(base, ".idphoto_write_test")
+        try:
+            with open(probe, "wb") as f:
+                f.write(b"ok")
+            os.remove(probe)
+        except Exception as e:  # noqa: BLE001
+            return False, f"目录不可写：{e}"
+        try:
+            store = self._make_result_store_from(path)
+        except Exception as e:  # noqa: BLE001
+            return False, f"无法初始化缓存目录：{e}"
+        self._result_stores.append(store)
+        self._result_store = store
+        if persist:
+            try:
+                self._settings.set("storage.cache_dir", path)
+                self._settings.save()
+            except Exception:
+                pass
+        return True, store.root
+
+    def _make_result_store_from(self, path):
+        from core.result_store import ResultStore
+        return ResultStore(cache_root=path or None)
+
+    def _maybe_warn_cache_disk(self):
+        """首次启动若缓存盘剩余空间太少，提示改到空间更大的磁盘。"""
+        if self._cache_root_setting():
+            return
+        try:
+            free_gb = shutil.disk_usage(tempfile.gettempdir()).free / 1024 ** 3
+        except Exception:
+            return
+        if free_gb < 30:
+            theme.info(
+                self, "warning", "缓存盘空间不足",
+                f"处理结果的临时缓存默认放在系统盘（{tempfile.gettempdir()}），"
+                f"当前仅剩 {free_gb:.0f} GB。\n"
+                "处理几千张照片会占用十几 GB，建议到「设置 → 存储」把缓存目录改到空间更大的磁盘。")
 
     def _start_processing(self, status_text):
         self.processing = True
@@ -2895,11 +2996,12 @@ class IDPhotoApp(QMainWindow):
             self._invoker.stop()
         except Exception:
             pass
-        # 清理本次运行的结果临时文件（PNG 落盘目录）
-        try:
-            self._result_store.clear()
-        except Exception:
-            pass
+        # 清理本次运行创建过的所有结果缓存目录（可能切换过目录）
+        for store in list(getattr(self, "_result_stores", None) or [self._result_store]):
+            try:
+                store.clear()
+            except Exception:
+                pass
         # 落盘设置
         try:
             self._settings.save()

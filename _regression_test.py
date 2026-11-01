@@ -415,6 +415,30 @@ def test_result_store_disk(win):
         win.processed_results.pop(3, None)
 
 
+def test_cache_dir_setting(win):
+    """自定义缓存目录：可切换、写入设置、空值回落系统临时目录。"""
+    import tempfile
+    import shutil
+
+    d = tempfile.mkdtemp(prefix="idphoto_cache_test_")
+    old = win._cache_root_setting()
+    try:
+        ok, root = win._switch_cache_dir(d)
+        assert ok, root
+        assert root.startswith(d), f"缓存目录没落在指定位置: {root}"
+        assert win._result_store.root == root
+        assert win._settings.get("storage.cache_dir") == d, "设置没写回"
+
+        ok2, root2 = win._switch_cache_dir("", persist=True)
+        assert ok2 and "idphoto_results" in root2, root2
+        assert win._settings.get("storage.cache_dir") == ""
+        assert win._check_batch_cache_space() is True, "空队列应直接通过空间检查"
+    finally:
+        win._settings.set("storage.cache_dir", old or "")
+        win._switch_cache_dir(old or "", persist=False)
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def test_process_one_applies_beauty_to_matting():
     """抠图也要过美颜，否则排版页换底色会变回素颜。"""
     from app import IDPhotoApp
@@ -1030,6 +1054,7 @@ def main():
         check("实时预览缓存 + hd/std 美颜复用",
               lambda: test_portrait_cache_and_hd_reuse(win))
         check("结果落盘 + 缩略图", lambda: test_result_store_disk(win))
+        check("自定义缓存目录", lambda: test_cache_dir_setting(win))
         check("批量导出 JPG 格式正确（含 KB=0）", test_batch_jpeg_format)
         check("中心渐变向量化（等价 + 提速）", test_gradient_equivalence_and_speed)
         check("实时预览单飞", lambda: test_live_preview_single_flight(win, app))

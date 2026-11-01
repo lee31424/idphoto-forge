@@ -11,6 +11,8 @@ UI 与样式解耦：
 """
 import os
 import re
+import shutil
+import tempfile
 import traceback
 
 from PySide6.QtWidgets import (
@@ -406,6 +408,37 @@ class SettingsDialog(QDialog):
         dl.addLayout(rmb_row)
         cl.addWidget(dl)
 
+        # ============ 存储 ============
+        st = theme.SectionCard("存储")
+        cache_row = QHBoxLayout()
+        cache_row.setSpacing(8)
+        cache_row.addWidget(theme.small_label("结果缓存目录："))
+        self.cache_dir_edit = theme.themed_line_edit()
+        self.cache_dir_edit.setReadOnly(True)
+        self.cache_dir_edit.setPlaceholderText("（默认：系统临时目录）")
+        cache_row.addWidget(self.cache_dir_edit, 1)
+        self.cache_pick_btn = PushButton(FluentIcon.FOLDER, "选择…")
+        self.cache_pick_btn.clicked.connect(self._pick_cache_dir)
+        cache_row.addWidget(self.cache_pick_btn)
+        self.cache_default_btn = PushButton("默认")
+        self.cache_default_btn.setToolTip("改回系统临时目录")
+        self.cache_default_btn.clicked.connect(self._use_default_cache_dir)
+        cache_row.addWidget(self.cache_default_btn)
+        st.addLayout(cache_row)
+
+        cache_info_row = QHBoxLayout()
+        cache_info_row.setSpacing(8)
+        self.cache_usage_label = theme.tip_label("")
+        cache_info_row.addWidget(self.cache_usage_label, 1)
+        self.cache_clean_btn = PushButton(FluentIcon.DELETE, "清理")
+        self.cache_clean_btn.setToolTip("删除本次运行的结果缓存（已处理的结果将无法预览）")
+        self.cache_clean_btn.clicked.connect(self._clean_cache_now)
+        cache_info_row.addWidget(self.cache_clean_btn)
+        st.addLayout(cache_info_row)
+        st.addWidget(theme.tip_label(
+            "缓存是处理结果的临时文件，退出软件时自动删除；约 5MB/张，3000 张约需 14GB。"))
+        cl.addWidget(st)
+
         cl.addStretch(1)
 
         # ============ 底部按钮 ============
@@ -503,6 +536,13 @@ class SettingsDialog(QDialog):
         # 打印：直接打印开关
         self.print_skip_switch.setChecked(
             bool(s.get("print.skip_dialog", False)))
+
+        # 存储：结果缓存目录
+        self.cache_dir_edit.setText(str(s.get("storage.cache_dir", "") or ""))
+        try:
+            self._refresh_cache_usage()
+        except Exception:
+            traceback.print_exc()
 
         # 模型状态 —— 高级卡片展示
         self._build_model_status_cards()
@@ -936,6 +976,49 @@ class SettingsDialog(QDialog):
             theme.info(self, "warning", "提示", f"配置文件：\n{path}")
 
     # ----------------------------------------------------------
+    #  存储（结果缓存目录）
+    # ----------------------------------------------------------
+    def _cache_base(self):
+        """当前选择的缓存根目录（空 = 系统临时目录）。"""
+        return (self.cache_dir_edit.text() or "").strip() or tempfile.gettempdir()
+
+    def _refresh_cache_usage(self):
+        base = self._cache_base()
+        try:
+            free_gb = shutil.disk_usage(base).free / 1024 ** 3
+        except Exception:
+            free_gb = 0.0
+        self.cache_usage_label.setText(
+            f"当前目录可用空间：{free_gb:.1f} GB（缓存约 5MB/张）")
+
+    def _pick_cache_dir(self):
+        folder = QFileDialog.getExistingDirectory(self, "选择结果缓存目录")
+        if folder:
+            self.cache_dir_edit.setText(folder)
+            self._refresh_cache_usage()
+
+    def _use_default_cache_dir(self):
+        self.cache_dir_edit.setText("")
+        self._refresh_cache_usage()
+
+    def _clean_cache_now(self):
+        """立即清理本次运行的结果缓存（已处理结果将无法再预览）。"""
+        try:
+            self.c._result_store.clear()
+            for store in list(getattr(self.c, "_result_stores", [])):
+                try:
+                    store.clear()
+                except Exception:
+                    pass
+            self.c.processed_results.clear()
+            self.c._refresh_result_thumbnails()
+            self.c.standard_image = self.c.hd_image = self.c.matting_image = None
+            self.c._refresh_right_previews()
+            theme.info(self, "success", "已清理", "结果缓存已删除。")
+        except Exception as e:  # noqa: BLE001
+            theme.info(self, "error", "清理失败", str(e))
+
+    # ----------------------------------------------------------
     def _on_save(self):
         """保存设置。
 
@@ -1005,6 +1088,8 @@ class SettingsDialog(QDialog):
             s.set("layout.default_gap_v", int(self.layout_gap_v_spin.value()))
             # 打印
             s.set("print.skip_dialog", self.print_skip_switch.isChecked())
+            # 存储：结果缓存目录（空 = 系统临时目录）
+            s.set("storage.cache_dir", (self.cache_dir_edit.text() or "").strip())
         except Exception as e:
             theme.info(self, "error", "保存失败", f"读取控件值失败: {e}")
             return
@@ -1038,6 +1123,12 @@ class SettingsDialog(QDialog):
                 traceback.print_exc()
             try:
                 ctrl._apply_app_identity()
+            except Exception:
+                traceback.print_exc()
+            # 缓存目录立即生效（保存后本来也会重启，这里先切过去）
+            try:
+                ctrl._switch_cache_dir(
+                    s.get("storage.cache_dir", "") or "", persist=False)
             except Exception:
                 traceback.print_exc()
             try:
