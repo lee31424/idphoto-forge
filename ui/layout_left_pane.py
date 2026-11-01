@@ -4,6 +4,7 @@
 从 LayoutView 中抽出: 成品证件照列表 + 排版规格配置。
 只暴露控制器需要的方法, 通过 controller (self.c) 回连。
 """
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QListWidget, QSizePolicy,
 )
@@ -61,19 +62,29 @@ class LayoutLeftPane(QWidget):
         # QPalette 修不住，必须 list_qss() 覆盖（浅色=浅底深字，深色=深底浅字）
         self.ready_listbox.setStyleSheet(theme.list_qss())
         self.ready_listbox.setSelectionMode(QListWidget.SingleSelection)
+        self.ready_listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.ready_listbox.setTextElideMode(Qt.ElideRight)
         self.ready_listbox.currentRowChanged.connect(
             lambda _: self._on_ready_select())
         card.addWidget(self.ready_listbox, 1)
 
-        r_ops = QHBoxLayout()
-        r_ops.setSpacing(4)
-        r_ops.addWidget(theme.compact_primary_button(
-            "导入", FluentIcon.FOLDER, lambda: self.c.on_add_ready_photos()))
-        r_ops.addWidget(theme.compact_danger_button(
+        # 两行两列：左侧面板只有 220~300px，4 个按钮挤一行会被压成图标+残字
+        r_ops_1 = QHBoxLayout()
+        r_ops_1.setSpacing(4)
+        r_ops_1.addWidget(theme.compact_primary_button(
+            "导入图片", FluentIcon.FOLDER, lambda: self.c.on_add_ready_photos()))
+        r_ops_1.addWidget(theme.compact_secondary_button(
+            "导入文件夹", FluentIcon.FOLDER_ADD,
+            lambda: self.c.on_add_ready_folder()))
+        card.addLayout(r_ops_1)
+
+        r_ops_2 = QHBoxLayout()
+        r_ops_2.setSpacing(4)
+        r_ops_2.addWidget(theme.compact_danger_button(
             "移除", FluentIcon.REMOVE, lambda: self._on_remove_ready_selected()))
-        r_ops.addWidget(theme.compact_secondary_button(
+        r_ops_2.addWidget(theme.compact_secondary_button(
             "清空", FluentIcon.DELETE, lambda: self.c.on_clear_ready_photos()))
-        card.addLayout(r_ops)
+        card.addLayout(r_ops_2)
         return card
 
     # ----------------------------------------------------------
@@ -114,11 +125,25 @@ class LayoutLeftPane(QWidget):
             "添加", None, lambda: self._on_add_mixed_item()))
         card.addLayout(count_add_row)
 
+        # 行 3：一键快捷项（背景默认，固定张数）——省去每次选规格/背景/数量
+        quick_row = QHBoxLayout()
+        quick_row.setSpacing(4)
+        quick_row.addWidget(theme.tip_label("快捷:"))
+        for _name, _count in (("自用2", 8), ("自用1", 9)):
+            quick_row.addWidget(theme.compact_secondary_button(
+                f"{_name} ×{_count}", None,
+                lambda n=_name, c=_count: self._quick_add_mixed(n, c)))
+        quick_row.addStretch(1)
+        card.addLayout(quick_row)
+
         # 排版列表 + 操作按钮
         self.mixed_listbox = QListWidget()
         self.mixed_listbox.setMaximumHeight(80)
         self.mixed_listbox.setStyleSheet(theme.list_qss())
         self.mixed_listbox.setSelectionMode(QListWidget.SingleSelection)
+        # 左栏只有 ~160px 宽：不要横向滚动条，超长文字用省略号（tooltip 有完整信息）
+        self.mixed_listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.mixed_listbox.setTextElideMode(Qt.ElideRight)
         card.addWidget(self.mixed_listbox)
 
         list_btns = QHBoxLayout()
@@ -308,6 +333,27 @@ class LayoutLeftPane(QWidget):
                 return hex_val
         return ""
 
+    def _append_mixed_item(self, name, w, h, count, bg_hex):
+        """把一条规格加入「排版清单」（列表 + 数据源）。"""
+        bg_label = "默认" if not bg_hex else next(
+            (label for label, val in LAYOUT_BG_OPTIONS if val == bg_hex), "自定义")
+        # 列表只有 ~160px 宽：文字要收着写，否则会撑出横向滚动条
+        display = f"{name} {w}×{h} · {count}张" + (f" · {bg_label}" if bg_hex else "")
+        self.mixed_items.append((name, w, h, int(count), bg_hex))
+        self.mixed_listbox.addItem(display)
+        self.mixed_listbox.item(self.mixed_listbox.count() - 1).setToolTip(
+            f"{name}  {w}×{h}  每人 {count} 张  背景：{bg_label}")
+        # 滚到底，让用户看到刚加的那条
+        self.mixed_listbox.scrollToBottom()
+
+    def _quick_add_mixed(self, name, count):
+        """快捷添加：按预设规格 + 默认背景 + 固定张数，一步入清单。"""
+        for pname, w, h in PRESET_SIZES:
+            if pname == name and w > 0 and h > 0:
+                self._append_mixed_item(name, w, h, count, "")
+                return
+        theme.info(self, "warning", "提示", f"找不到规格「{name}」。")
+
     def _on_add_mixed_item(self):
         try:
             w = int(self._current_w)
@@ -323,11 +369,7 @@ class LayoutLeftPane(QWidget):
             name = "一寸"
         bg_display = self.mixed_bg_combo.currentText()
         bg_hex = self._bg_hex_for_display(bg_display) if bg_display else ""
-        bg_label = "默认" if not bg_hex else next(
-            (label for label, val in LAYOUT_BG_OPTIONS if val == bg_hex), "自定义")
-        display = f"{name}  {w}x{h}  每人x{count}张  {bg_label}"
-        self.mixed_items.append((name, w, h, count, bg_hex))
-        self.mixed_listbox.addItem(display)
+        self._append_mixed_item(name, w, h, count, bg_hex)
 
     def _on_remove_mixed_item(self):
         sel = self.mixed_listbox.currentRow()

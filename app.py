@@ -221,6 +221,7 @@ class IDPhotoApp(QMainWindow):
         self.processing = False
         self._layout_busy = False        # 排版生成中（后台线程），防重入
         self._export_busy = False        # 排版图导出中（后台线程），防重入
+        self._ready_import_busy = False  # 成品文件夹导入中（后台线程），防重入
         self._stop_batch = False
         self._pause_evt = threading.Event()  # 批量暂停/继续控制（set=运行，clear=暂停）
         self._pause_evt.set()
@@ -1891,6 +1892,81 @@ class IDPhotoApp(QMainWindow):
         if failed:
             theme.info(self, "warning", "部分图片加载失败",
                        "无法读取以下文件：\n" + "\n".join(failed[:5]))
+
+    def on_add_ready_folder(self):
+        """从文件夹批量导入成品证件照（后台加载，界面不卡）。"""
+        if getattr(self, "_ready_import_busy", False):
+            return
+        folder = QFileDialog.getExistingDirectory(self, "选择成品证件照文件夹")
+        if not folder:
+            return
+
+        exts = set()
+        for _label, e in IMAGE_EXTENSIONS:
+            e = str(e).lower().lstrip("*")
+            if e:
+                exts.add(e)
+        paths = []
+        for root, _dirs, files in os.walk(folder):
+            for fn in sorted(files):
+                if os.path.splitext(fn)[1].lower() in exts:
+                    paths.append(os.path.join(root, fn))
+        if not paths:
+            theme.info(self, "warning", "提示", "所选文件夹中没有找到支持的图片。")
+            return
+
+        existing = {os.path.normcase(os.path.normpath(it["path"]))
+                    for it in self.ready_photos if it.get("path")}
+        todo = [p for p in paths
+                if os.path.normcase(os.path.normpath(p)) not in existing]
+        skipped = len(paths) - len(todo)
+        if not todo:
+            theme.info(self, "info", "提示",
+                       f"文件夹里的 {len(paths)} 张图都已在列表中，没有新增。")
+            return
+
+        self._ready_import_busy = True
+        total = len(todo)
+        self._set_status(f"正在导入成品证件照 0/{total}…")
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+
+        def _worker():
+            loaded, failed = [], []
+            for i, fp in enumerate(todo, 1):
+                try:
+                    img = self._load_image(fp)
+                    if img is None:
+                        failed.append(os.path.basename(fp))
+                    else:
+                        loaded.append((fp, img))
+                except Exception as e:  # noqa: BLE001
+                    failed.append(f"{os.path.basename(fp)}: {e}")
+                if i % 5 == 0 or i == total:
+                    self._safe_after(0, lambda i=i: self._set_status(
+                        f"正在导入成品证件照 {i}/{total}…"))
+            self._safe_after(0, lambda: self._on_ready_folder_loaded(
+                loaded, failed, skipped))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _on_ready_folder_loaded(self, loaded, failed, skipped):
+        self._ready_import_busy = False
+        QApplication.restoreOverrideCursor()
+        for fp, img in loaded:
+            self.ready_photos.append({
+                "name": os.path.basename(fp), "path": fp,
+                "image": img, "matting": None, "hd": None})
+        if loaded:
+            self.layout_pane.refresh_ready_list()
+        msg = f"已从文件夹导入 {len(loaded)} 张成品证件照"
+        if skipped:
+            msg += f"（跳过重复 {skipped} 张）"
+        self._set_status(msg if loaded else "没有导入任何图片")
+        if failed:
+            theme.info(self, "warning", "部分图片加载失败",
+                       "无法读取以下文件：\n" + "\n".join(failed[:5]))
+        elif not loaded:
+            theme.info(self, "warning", "提示", "没有成功导入任何图片。")
 
     def on_remove_ready_photo(self, idx):
         if 0 <= idx < len(self.ready_photos):

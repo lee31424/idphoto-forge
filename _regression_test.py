@@ -545,6 +545,64 @@ def test_export_part_fallback(win):
             appmod.save_image_with_dpi = orig
 
 
+def test_quick_add_shortcuts(win):
+    """排版规格的两个快捷项：自用2×8、自用1×9，背景默认。"""
+    from PySide6.QtWidgets import QPushButton
+
+    llp = win.layout_pane
+    llp.mixed_items = []
+    llp.mixed_listbox.clear()
+
+    base = llp.mixed_listbox.count()
+    llp._quick_add_mixed("自用2", 8)
+    assert llp.mixed_items[-1] == ("自用2", 378, 496, 8, ""), llp.mixed_items[-1]
+    llp._quick_add_mixed("自用1", 9)
+    assert llp.mixed_items[-1] == ("自用1", 319, 425, 9, ""), llp.mixed_items[-1]
+    assert llp.mixed_listbox.count() == base + 2
+
+    # 两个快捷按钮要真的在界面上
+    texts = [b.text() for b in llp.findChildren(QPushButton)]
+    assert any("自用2 ×8" in t for t in texts), texts
+    assert any("自用1 ×9" in t for t in texts), texts
+    assert any("导入文件夹" in t for t in texts), "成品卡片缺少文件夹导入按钮"
+
+    llp.mixed_items = []
+    llp.mixed_listbox.clear()
+
+
+def test_ready_folder_import(win, app):
+    """成品证件照：从文件夹导入，跳过重复，忽略非图片。"""
+    import app as appmod
+
+    with tempfile.TemporaryDirectory() as td:
+        for name, color in (("a.png", 80), ("b.png", 140)):
+            cv2.imwrite(os.path.join(td, name),
+                        np.full((120, 90, 3), color, dtype=np.uint8))
+        with open(os.path.join(td, "note.txt"), "w", encoding="utf-8") as f:
+            f.write("not an image")
+
+        win.ready_photos = []
+        orig = appmod.QFileDialog.getExistingDirectory
+        appmod.QFileDialog.getExistingDirectory = staticmethod(lambda *a, **k: td)
+        try:
+            win.on_add_ready_folder()
+            pump(app, until=lambda: not win._ready_import_busy, timeout=20)
+            names = {it["name"] for it in win.ready_photos}
+            assert names == {"a.png", "b.png"}, names
+            assert all(it.get("path") for it in win.ready_photos)
+            assert all(it.get("hd") is None for it in win.ready_photos)
+
+            # 再导入一次：全部重复，不应新增
+            before = len(win.ready_photos)
+            win.on_add_ready_folder()
+            pump(app, timeout=0.5)
+            assert len(win.ready_photos) == before, "重复文件被再次导入"
+        finally:
+            appmod.QFileDialog.getExistingDirectory = orig
+            win.ready_photos = []
+            win.layout_pane.refresh_ready_list()
+
+
 def test_generate_layout_async(win, app):
     """「排版」按钮走后台线程：结束后 busy 复位、页面已交给界面。"""
     std = np.full((413, 295, 4), 120, dtype=np.uint8)
@@ -625,6 +683,8 @@ def main():
         check("批量导出排版图（多页）", lambda: test_export_all_layouts(win, app))
         check("排版后台生成（不卡 UI）", lambda: test_generate_layout_async(win, app))
         check("导出 .part 失败自动回退", lambda: test_export_part_fallback(win))
+        check("排版规格快捷项（自用2×8 / 自用1×9）", lambda: test_quick_add_shortcuts(win))
+        check("成品证件照文件夹导入", lambda: test_ready_folder_import(win, app))
         check("默认纸张为 6 寸相纸", lambda: test_default_paper(win))
         check("旋转校正默认开启 + 下拉一致",
               lambda: test_defaults_and_dropdowns(win))
