@@ -329,6 +329,7 @@ python -c "import sys; sys.path.insert(0,'.'); import app; print('IMPORT_APP_OK'
 | 18 | 调整窗口大小时控件不重排 / 位置偏移 | ① `TabStrip` 每个页签、排版页整页都包进 `widgets.wrap_scrollable()`（内容高于窗口时滚动，而不是被压到 `minimumSizeHint` 以下导致卡片重叠）；② 右栏宽度 300~420 → **360~480**（360 是"目标尺寸"那一行的实际最小宽度）；③ 新增 `IDPhotoApp.resizeEvent` + `_apply_split_layout()`，按 左16% : 中60% : 右24% 重排三栏，用户拖过分隔条后按他拖出的比例走 |
 | 19 | 排版规格：删护照/签证/驾照/社保卡，加自用1/自用2 | 只改 `styles.PRESET_SIZES`（删 4 项，加 `("自用1",319,425)`、`("自用2",378,496)`，即 27×36mm / 32×42mm @300DPI）与 `DEFAULT_COUNT_BY_SIZE`；处理页删掉原先硬编码的自用1/2 循环，与排版页共用同一份清单 |
 | 20 | 排版规格「数量」框看不到数字 | 不是宽度问题：`qfluentwidgets.SpinBox` 的编辑区恒为 1px（见 §5 坑表）。新增 `widgets.NumberField`（LineEdit + `QIntValidator`，接口兼容 SpinBox），替换排版页数量框、设置里 5 个数值框（KB/留白/横距/纵距/超时）以及规格/纸张对话框里的宽·高·张数框；删除已无用的 `theme.spinbox_qss`。实测数量框 72×33、文字区完整，截图内深色像素 34（空框为 2），数字确实画出来了 |
+| 21 | 「选项」默认值：出血 50 / 横距 20 / 纵距 20 | 三个默认值收敛到 `styles.LAYOUT_DEFAULT_BLEED / _GAP_H / _GAP_V`，`layout_view` 与 `settings_dialog` 共用，`DEFAULT_SETTINGS["layout"]` 同步（新装即 20/20/50）。注意 `settings.json` 在 `.gitignore` 里，本机已手动把旧的 1/1 改成 20/20 |
 
 > 附：`布局页` 之前把整列最小高度顶到 766px，导致 700 高的窗口把主窗口内容区挤出屏幕（底部被裁）。现在 `LayoutView.minimumSizeHint()` 降到 68px，窗口 1000×700 时不再裁切。
 

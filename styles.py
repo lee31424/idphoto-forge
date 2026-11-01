@@ -137,6 +137,13 @@ LAYOUT_PHOTO_INTERVAL_V = 0  # 照片纵向间距（默认 0）
 LAYOUT_SIDE_INTERVAL_W = 70  # 排版水平边距（照片到纸边的左右距离，越大照片越靠中间）
 LAYOUT_SIDE_INTERVAL_H = 50  # 排版垂直边距（照片到纸边的上下距离，越大照片越靠中间）
 
+# 「纸张与打印设置 → 选项」里三个数值的默认值（单位 px）。
+# 与上面 LAYOUT_PHOTO_INTERVAL_* / LAYOUT_SIDE_INTERVAL_* 的区别：
+# 那四个是排版引擎在「没有 UI 参数」时的兜底，这三个是 UI 首次启动/重置时的默认值。
+LAYOUT_DEFAULT_BLEED = 50    # 出血线
+LAYOUT_DEFAULT_GAP_H = 20    # 横距（照片横向间距）
+LAYOUT_DEFAULT_GAP_V = 20    # 纵距（照片纵向间距）
+
 # 打印纸张预设（宽 x 高，毫米）
 PAPER_PRESETS = [
     ("6寸相纸", 152, 102),

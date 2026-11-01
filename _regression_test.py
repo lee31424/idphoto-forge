@@ -361,6 +361,42 @@ def test_preset_sizes():
         assert name in DEFAULT_COUNT_BY_SIZE, f"{name} 缺少默认数量"
 
 
+def test_layout_option_defaults(win):
+    """选项默认值：出血 50、横距 20、纵距 20（新装 / 无配置时）。"""
+    import styles
+    from core.settings_store import SettingsStore, DEFAULT_SETTINGS
+
+    assert styles.LAYOUT_DEFAULT_BLEED == 50, styles.LAYOUT_DEFAULT_BLEED
+    assert styles.LAYOUT_DEFAULT_GAP_H == 20, styles.LAYOUT_DEFAULT_GAP_H
+    assert styles.LAYOUT_DEFAULT_GAP_V == 20, styles.LAYOUT_DEFAULT_GAP_V
+
+    defaults = DEFAULT_SETTINGS["layout"]
+    assert defaults["default_bleed"] == 50, defaults
+    assert defaults["default_gap_h"] == 20, defaults
+    assert defaults["default_gap_v"] == 20, defaults
+
+    # 空配置（相当于首次启动）应该拿到 50 / 20 / 20
+    tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+    tmp.close()
+    try:
+        store = SettingsStore(tmp.name, DEFAULT_SETTINGS)
+        assert store.get("layout.default_bleed") == 50
+        assert store.get("layout.default_gap_h") == 20
+        assert store.get("layout.default_gap_v") == 20
+    finally:
+        os.unlink(tmp.name)
+
+    # 界面上三个输入框显示的就是配置里的值
+    lv = win.pages["layout"]
+    s = win._settings
+    assert int(lv.bleed_edit.text()) == int(
+        s.get("layout.default_bleed", styles.LAYOUT_DEFAULT_BLEED))
+    assert int(lv.gap_h_edit.text()) == int(
+        s.get("layout.default_gap_h", styles.LAYOUT_DEFAULT_GAP_H))
+    assert int(lv.gap_v_edit.text()) == int(
+        s.get("layout.default_gap_v", styles.LAYOUT_DEFAULT_GAP_V))
+
+
 def test_defaults_and_dropdowns(win):
     """人脸旋转校正默认开启；两个页面下拉里的规格一致。"""
     pv = win.pages["process"]
@@ -402,6 +438,7 @@ def main():
               lambda: test_resize_does_not_compress(win, app))
         check("规格清单（删 4 项 / 加自用1、自用2）", test_preset_sizes)
         check("数量输入框可见（不用 SpinBox）", lambda: test_count_field_visible(win))
+        check("选项默认值（出血50/横距20/纵距20）", lambda: test_layout_option_defaults(win))
         check("旋转校正默认开启 + 下拉一致",
               lambda: test_defaults_and_dropdowns(win))
     finally:

@@ -13,7 +13,8 @@ from qfluentwidgets import (
 )
 
 from . import theme, widgets
-from styles import PAPER_PRESETS, PRINT_DPI
+from styles import (PAPER_PRESETS, PRINT_DPI, LAYOUT_DEFAULT_BLEED,
+                    LAYOUT_DEFAULT_GAP_H, LAYOUT_DEFAULT_GAP_V)
 
 # 导出区大按钮样式（调用 theme 的主题感知函数，跟随浅/深模式与强调色）
 
@@ -113,8 +114,11 @@ class LayoutView(QWidget):
         legend_row.addStretch(1)
         card.addLayout(legend_row)
 
-        # 出血 + 间距：用更小字号的小标签，压缩行高；默认值从 settings 读
-        bleed_default = int(s.get("layout.default_bleed", 50) or 50) if s else 50
+        # 出血 + 间距：用更小字号的小标签，压缩行高；默认值从 settings 读，
+        # 没有配置时用 styles 里集中定义的默认值（出血 50 / 横距 20 / 纵距 20）。
+        bleed_default = (int(s.get("layout.default_bleed", LAYOUT_DEFAULT_BLEED)
+                             or LAYOUT_DEFAULT_BLEED)
+                         if s else LAYOUT_DEFAULT_BLEED)
         bleed_row = QHBoxLayout()
         bleed_row.setSpacing(4)
         bleed_row.addWidget(theme.tip_label("出血线:"))
@@ -126,8 +130,12 @@ class LayoutView(QWidget):
         bleed_row.addStretch(1)
         card.addLayout(bleed_row)
 
-        gap_h_default = int(s.get("layout.default_gap_h", 1) or 1) if s else 1
-        gap_v_default = int(s.get("layout.default_gap_v", 1) or 1) if s else 1
+        gap_h_default = (int(s.get("layout.default_gap_h", LAYOUT_DEFAULT_GAP_H)
+                             or LAYOUT_DEFAULT_GAP_H)
+                         if s else LAYOUT_DEFAULT_GAP_H)
+        gap_v_default = (int(s.get("layout.default_gap_v", LAYOUT_DEFAULT_GAP_V)
+                             or LAYOUT_DEFAULT_GAP_V)
+                         if s else LAYOUT_DEFAULT_GAP_V)
         gap_row = QHBoxLayout()
         gap_row.setSpacing(4)
         gap_row.addWidget(theme.tip_label("横距:"))

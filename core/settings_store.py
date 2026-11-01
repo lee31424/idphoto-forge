@@ -155,6 +155,10 @@ DEFAULT_SETTINGS = {
         "custom_presets": [],
         # 自定义纸张规格。每项: (name, 宽mm, 高mm)；内置纸张由 styles.PAPER_PRESETS 提供。
         "custom_paper_presets": [],
+        # 「纸张与打印设置 → 选项」默认值（px）。改这里 = 新装/无配置时的默认值。
+        "default_bleed": 50,
+        "default_gap_h": 20,
+        "default_gap_v": 20,
     },
     "model": {
         "preferred_source": "mirror",

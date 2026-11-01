@@ -30,7 +30,10 @@ from . import theme, widgets
 from .layout_left_pane import LayoutLeftPane
 from .layout_view import LayoutView
 from .theme import make_logo_pixmap
-from styles import RENDER_MODES, MATTING_MODELS, FACE_MODELS, PRESET_SIZES, PAPER_PRESETS
+from styles import (
+    RENDER_MODES, MATTING_MODELS, FACE_MODELS, PRESET_SIZES, PAPER_PRESETS,
+    LAYOUT_DEFAULT_BLEED, LAYOUT_DEFAULT_GAP_H, LAYOUT_DEFAULT_GAP_V,
+)
 
 
 class SettingsDialog(QDialog):
@@ -488,11 +491,14 @@ class SettingsDialog(QDialog):
         self.layout_crop_full_switch.setChecked(
             bool(s.get("layout.crop_line_full_page", True)))
         self.layout_bleed_spin.setValue(
-            int(s.get("layout.default_bleed", 50) or 50))
+            int(s.get("layout.default_bleed", LAYOUT_DEFAULT_BLEED)
+                or LAYOUT_DEFAULT_BLEED))
         self.layout_gap_h_spin.setValue(
-            int(s.get("layout.default_gap_h", 1) or 1))
+            int(s.get("layout.default_gap_h", LAYOUT_DEFAULT_GAP_H)
+                or LAYOUT_DEFAULT_GAP_H))
         self.layout_gap_v_spin.setValue(
-            int(s.get("layout.default_gap_v", 1) or 1))
+            int(s.get("layout.default_gap_v", LAYOUT_DEFAULT_GAP_V)
+                or LAYOUT_DEFAULT_GAP_V))
 
         # 打印：直接打印开关
         self.print_skip_switch.setChecked(
