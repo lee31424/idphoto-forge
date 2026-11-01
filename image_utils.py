@@ -313,7 +313,8 @@ def _apply_skin_even(image_bgr: np.ndarray, mask: np.ndarray, strength: int) -> 
 def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
     """美颜：磨皮 + 肤色矫正 + 美白，只处理皮肤（矫正作用于整张人像）。
 
-    params: {"smooth": 0~10, "whiten": 0~10, "correct": 0~10, "even": 0~10}
+    params: {"smooth": 0~10, "whiten": 0~10, "correct": 0~10, "even": 0~10,
+             "highlight": 0~10}
     alpha:  可选，uint8 人像透明度（BGRA 的 A 通道）；传入后效果只落在人像内，
             透明背景不会被误处理。
 
@@ -331,7 +332,9 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
     whiten = int(params.get("whiten", 0) or 0)
     correct = int(params.get("correct", 0) or 0)
     even = int(params.get("even", 0) or 0)
-    if smooth <= 0 and whiten <= 0 and correct <= 0 and even <= 0:
+    highlight = int(params.get("highlight", 0) or 0)
+    if (smooth <= 0 and whiten <= 0 and correct <= 0
+            and even <= 0 and highlight <= 0):
         return image_bgr
 
     mask = _skin_mask(image_bgr)
@@ -377,6 +380,25 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
         blended = np.clip(smoothed.astype(np.float32) + detail * 0.25, 0, 255)
         k = (roi_mask * strength)[..., None]
         result = result * (1.0 - k) + blended * k
+
+    # ---- 高光压制：把皮肤上的反光/油光压回去 ----
+    if highlight > 0:
+        lab = cv2.cvtColor(np.clip(result, 0, 255).astype(np.uint8),
+                           cv2.COLOR_BGR2LAB).astype(np.float32)
+        lightness = lab[:, :, 0]
+        sel = roi_mask > 0.5
+        if int(sel.sum()) >= 50:
+            # 以「皮肤均值 + 0.8σ」为高光起点：只压明显高出正常肤色的反光，
+            # 不会把整张脸压暗；用均值/标准差比高分位更抗“大面积亮区”。
+            values = lightness[sel]
+            cap = float(values.mean() + 0.8 * values.std())
+            cap = float(np.clip(cap, 110.0, 225.0))
+            w = np.clip((lightness - cap) / 30.0, 0.0, 1.0)   # 30 灰阶平滑过渡
+            w = cv2.GaussianBlur(w, (0, 0), 3.0)
+            k = min(max(highlight, 0), 10) / 10.0 * 0.9
+            lab[:, :, 0] = lightness - k * (roi_mask * w) * (lightness - cap)
+            result = cv2.cvtColor(np.clip(lab, 0, 255).astype(np.uint8),
+                                  cv2.COLOR_LAB2BGR).astype(np.float32)
 
     # ---- 美白：LAB 的 L 提亮 + 轻微去黄 ----
     if whiten > 0:

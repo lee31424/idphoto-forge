@@ -234,6 +234,48 @@ def test_skin_even():
     assert np.array_equal(off, bgra), "强度 0 时不应改动"
 
 
+def test_highlight_suppression():
+    """高光压制：亮斑变暗，正常肤色不变。"""
+    from app import IDPhotoApp
+
+    bgra = np.zeros((200, 200, 4), dtype=np.uint8)
+    bgra[..., :3] = (63, 97, 134)          # 正常肤色
+    bgra[60:140, 40:160, :3] = (200, 225, 245)   # 一块高光（油光）
+    bgra[..., 3] = 255
+
+    def lab_l(img):
+        return cv2.cvtColor(img[..., :3], cv2.COLOR_BGR2LAB)[..., 0].astype(np.float32)
+
+    before = lab_l(bgra)
+    out = IDPhotoApp._apply_beauty_bgra(
+        bgra, {"smooth": 0, "whiten": 0, "correct": 0, "even": 0, "highlight": 10})
+    after = lab_l(out)
+
+    drop = float(before[60:140, 40:160].mean() - after[60:140, 40:160].mean())
+    base_change = abs(float(before[:20, :20].mean() - after[:20, :20].mean()))
+    assert drop > 15, f"高光没被压下来（降了 {drop:.1f}）"
+    assert base_change < 2.0, f"正常肤色被误压（变了 {base_change:.1f}）"
+
+
+def test_beauty_switch(win):
+    """美颜一键开关：关闭后参数全部归零、滑块置灰。"""
+    pv = win.pages["process"]
+    pv.beauty_switch.setChecked(True)
+    pv._reset_beauty()
+    assert pv.get_beauty_params()["highlight"] == 3
+    assert pv.get_beauty_params()["smooth"] == 3
+
+    pv.beauty_switch.setChecked(False)
+    assert all(v == 0 for v in pv.get_beauty_params().values()), \
+        f"关闭后仍有参数: {pv.get_beauty_params()}"
+    assert not pv.smooth_row.isEnabled(), "关闭后滑块没置灰"
+
+    pv.beauty_switch.setChecked(True)
+    assert pv.get_beauty_params()["smooth"] == 3, "重新开启后参数丢失"
+    assert pv.smooth_row.isEnabled()
+    pv._reset_beauty()
+
+
 def test_process_one_applies_beauty_to_matting():
     """抠图也要过美颜，否则排版页换底色会变回素颜。"""
     from app import IDPhotoApp
@@ -840,6 +882,8 @@ def main():
         check("磨皮/美白效果（降纹理/提亮）", test_beauty_smooth_and_whiten)
         check("肤色矫正（偏黄拉回正常）", test_skin_tone_correction)
         check("颜色均衡（压平色斑）", test_skin_even)
+        check("高光压制（亮斑变暗）", test_highlight_suppression)
+        check("美颜一键开关", lambda: test_beauty_switch(win))
         check("抠图也应用美颜（排版换底色）", test_process_one_applies_beauty_to_matting)
         check("批量导出 JPG 格式正确（含 KB=0）", test_batch_jpeg_format)
         check("中心渐变向量化（等价 + 提速）", test_gradient_equivalence_and_speed)

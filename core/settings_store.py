@@ -124,7 +124,7 @@ class SettingsStore:
 
 DEFAULT_SETTINGS = {
     "appearance": {
-        "theme_mode": "light",               # light 浅色（默认） / dark 深色
+        "theme_mode": "dark",                # light 浅色 / dark 深色（默认黑背景）
         "accent_color": "#F97316",          # 强调色（主题色），可自定义
         "app_name": "证件照制作工具",         # 软件名称（窗口标题 + 顶栏名称）
         "app_icon": "",                      # 自定义图标路径(绝对)；空=默认 logo

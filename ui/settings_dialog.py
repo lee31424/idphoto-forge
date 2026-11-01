@@ -431,8 +431,8 @@ class SettingsDialog(QDialog):
     # ----------------------------------------------------------
     def _load_from_settings(self):
         s = self.c._settings
-        mode = s.get("appearance.theme_mode", "light")
-        self.mode_group.set(mode if mode in ("light", "dark") else "light")
+        mode = s.get("appearance.theme_mode", "dark")
+        self.mode_group.set(mode if mode in ("light", "dark") else "dark")
         accent = s.get("appearance.accent_color", "#F97316")
         self.accent_btn.setColor(QColor(accent))
         self._sync_swatch(accent)

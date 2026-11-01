@@ -15,12 +15,12 @@ from qfluentwidgets import (
     BodyLabel, CaptionLabel, FluentIcon, InfoBar, InfoBarPosition,
 )
 
-from . import widgets
+from . import theme, widgets
 from styles import (
     RENDER_MODES, MATTING_MODELS, FACE_MODELS, PRESET_COLORS, PROCESS_MODES,
     DEFAULT_BG_COLOR, DEFAULT_WATERMARK_COLOR, PRESET_SIZES, PRINT_DPI,
     BEAUTY_MAX, BEAUTY_DEFAULT_SMOOTH, BEAUTY_DEFAULT_WHITEN,
-    BEAUTY_DEFAULT_CORRECT, BEAUTY_DEFAULT_EVEN,
+    BEAUTY_DEFAULT_CORRECT, BEAUTY_DEFAULT_EVEN, BEAUTY_DEFAULT_HIGHLIGHT,
 )
 from color_utils import hex_to_rgb_tuple
 
@@ -318,8 +318,21 @@ class ProcessView(QWidget):
         v.setSpacing(12)
 
         beauty_card = widgets.CardSection("美颜参数")
-        # 只保留「磨皮 / 美白 / 肤色矫正 / 颜色均衡」：
-        # 四者都基于皮肤遮罩（+人像 alpha），不再提供亮度/对比/饱和/锐化——
+
+        # 一键开关：关闭后所有美颜参数都不生效，方便和原图对比
+        switch_row = QHBoxLayout()
+        switch_row.setSpacing(8)
+        switch_row.addWidget(theme.small_label("美颜："))
+        self.beauty_switch = theme.themed_switch()
+        self.beauty_switch.setChecked(True)
+        self.beauty_switch.checkedChanged.connect(self._on_beauty_toggled)
+        switch_row.addWidget(self.beauty_switch)
+        switch_row.addWidget(theme.tip_label("关闭后不美颜"))
+        switch_row.addStretch(1)
+        beauty_card.addLayout(switch_row)
+
+        # 只保留「磨皮 / 美白 / 肤色矫正 / 颜色均衡 / 高光压制」：
+        # 都基于皮肤遮罩（+人像 alpha），不再提供亮度/对比/饱和/锐化——
         # 那些属于全局调色，会把底色和衣服一起改掉。
         self.smooth_row = widgets.SliderRow(
             "磨皮", 0, BEAUTY_MAX, 1, BEAUTY_DEFAULT_SMOOTH, 0)
@@ -337,6 +350,11 @@ class ProcessView(QWidget):
         self.even_row.setToolTip(
             "压平脸上的红一块、白一块（低频色斑），保留毛孔纹理；0 = 关闭")
         beauty_card.addWidget(self.even_row)
+        self.highlight_row = widgets.SliderRow(
+            "高光压制", 0, BEAUTY_MAX, 1, BEAUTY_DEFAULT_HIGHLIGHT, 0)
+        self.highlight_row.setToolTip(
+            "压掉额头/鼻尖的反光油光，正常肤色不变暗；0 = 关闭")
+        beauty_card.addWidget(self.highlight_row)
 
         self.reset_beauty_btn = PushButton("重置美颜")
         self.reset_beauty_btn.clicked.connect(lambda: self._reset_beauty())
@@ -344,11 +362,21 @@ class ProcessView(QWidget):
         v.addWidget(beauty_card)
 
         # 美颜滑块实时预览联动（与高级参数同一套防抖）
-        for r in (self.smooth_row, self.whiten_row, self.correct_row, self.even_row):
+        for r in self._beauty_rows():
             r.valueChanged.connect(self._schedule_live_preview)
 
         v.addStretch(1)
         return w
+
+    def _beauty_rows(self):
+        return (self.smooth_row, self.whiten_row, self.correct_row,
+                self.even_row, self.highlight_row)
+
+    def _on_beauty_toggled(self, checked):
+        """一键开关：关闭时置灰滑块并让参数全部归零（不发信号避免抖动）。"""
+        for r in self._beauty_rows():
+            r.setEnabled(bool(checked))
+        self._schedule_live_preview()
 
     # ----------------------------------------------------------
     #  水印
@@ -581,10 +609,12 @@ class ProcessView(QWidget):
         self.size_unit_combo.setCurrentIndex(0)  # 单位归位 px
 
     def _reset_beauty(self):
+        self.beauty_switch.setChecked(True)
         self.smooth_row.set_value(BEAUTY_DEFAULT_SMOOTH)
         self.whiten_row.set_value(BEAUTY_DEFAULT_WHITEN)
         self.correct_row.set_value(BEAUTY_DEFAULT_CORRECT)
         self.even_row.set_value(BEAUTY_DEFAULT_EVEN)
+        self.highlight_row.set_value(BEAUTY_DEFAULT_HIGHLIGHT)
 
     def set_model_status(self, text, missing=False):
         """更新模型就绪状态。
@@ -679,14 +709,19 @@ class ProcessView(QWidget):
 
     def get_beauty_params(self):
         try:
+            if not self.beauty_switch.isChecked():
+                return {"smooth": 0, "whiten": 0, "correct": 0,
+                        "even": 0, "highlight": 0}
             return {
                 "smooth": int(self.smooth_row.value()),
                 "whiten": int(self.whiten_row.value()),
                 "correct": int(self.correct_row.value()),
                 "even": int(self.even_row.value()),
+                "highlight": int(self.highlight_row.value()),
             }
         except (ValueError, TypeError):
-            return {"smooth": 0, "whiten": 0, "correct": 0, "even": 0}
+            return {"smooth": 0, "whiten": 0, "correct": 0,
+                    "even": 0, "highlight": 0}
 
     def get_watermark_params(self):
         try:
