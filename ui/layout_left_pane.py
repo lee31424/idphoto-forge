@@ -4,12 +4,11 @@
 从 LayoutView 中抽出: 成品证件照列表 + 排版规格配置。
 只暴露控制器需要的方法, 通过 controller (self.c) 回连。
 """
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QListWidget, QSizePolicy,
 )
 from qfluentwidgets import (
-    ComboBox, SpinBox, FluentIcon, Dialog, MessageBox, LineEdit,
+    ComboBox, FluentIcon, Dialog, MessageBox, LineEdit,
     TransparentToolButton,
 )
 
@@ -37,8 +36,10 @@ class LayoutLeftPane(QWidget):
         theme.register_theme_widget(self)
 
     def refresh_theme(self):
-        """浅/深切换时重染数量数字框 + 两个裸列表配色（list_qss 跟随调色板）。"""
-        self.mixed_count_spin.setStyleSheet(theme.spinbox_qss("QSpinBox"))
+        """浅/深切换时重染两个裸列表配色（list_qss 跟随调色板）。
+
+        数量输入框是 theme 托管的 LineEdit，不需要手写样式。
+        """
         self.ready_listbox.setStyleSheet(theme.list_qss())
         self.mixed_listbox.setStyleSheet(theme.list_qss())
 
@@ -102,13 +103,12 @@ class LayoutLeftPane(QWidget):
         count_add_row = QHBoxLayout()
         count_add_row.setSpacing(6)
         count_add_row.addWidget(theme.small_label("数量："))
-        self.mixed_count_spin = SpinBox()
-        self.mixed_count_spin.setRange(1, 99)
-        self.mixed_count_spin.setValue(8)
-        self.mixed_count_spin.setFixedWidth(72)
-        self.mixed_count_spin.setStyleSheet(theme.spinbox_qss("QSpinBox"))
-        self.mixed_count_spin.lineEdit().setAlignment(Qt.AlignCenter)
-        count_add_row.addWidget(self.mixed_count_spin)
+        # 用 NumberField（LineEdit + 整数校验）而不是 qfluentwidgets.SpinBox：
+        # SpinBox 在本项目这套 Qt/qfluentwidgets 组合下内部编辑区只有 1px 宽，
+        # 数字完全看不见（详情见 widgets.NumberField 的类注释）。
+        self.mixed_count_edit = widgets.NumberField(
+            value=8, minimum=1, maximum=99, width=72)
+        count_add_row.addWidget(self.mixed_count_edit)
         count_add_row.addStretch(1)
         count_add_row.addWidget(theme.compact_primary_button(
             "添加", None, lambda: self._on_add_mixed_item()))
@@ -210,7 +210,7 @@ class LayoutLeftPane(QWidget):
         try:
             w = int(self._current_w)
             h = int(self._current_h)
-            count = int(self.mixed_count_spin.value())
+            count = int(self.mixed_count_edit.value())
         except (ValueError, TypeError):
             return None
         if w <= 0 or h <= 0 or count <= 0:
@@ -291,7 +291,7 @@ class LayoutLeftPane(QWidget):
             if name == selected:
                 self._current_w = int(w)
                 self._current_h = int(h)
-                self.mixed_count_spin.setValue(int(count))
+                self.mixed_count_edit.setValue(int(count))
                 return
         for name, w, h in PRESET_SIZES:
             if name == selected and w > 0 and h > 0:
@@ -300,7 +300,7 @@ class LayoutLeftPane(QWidget):
                 break
         default_count = DEFAULT_COUNT_BY_SIZE.get(
             selected, DEFAULT_COUNT_FALLBACK)
-        self.mixed_count_spin.setValue(int(default_count))
+        self.mixed_count_edit.setValue(int(default_count))
 
     def _bg_hex_for_display(self, display):
         for label, hex_val in LAYOUT_BG_OPTIONS:
@@ -312,7 +312,7 @@ class LayoutLeftPane(QWidget):
         try:
             w = int(self._current_w)
             h = int(self._current_h)
-            count = int(self.mixed_count_spin.value())
+            count = int(self.mixed_count_edit.value())
             if w <= 0 or h <= 0 or count <= 0:
                 raise ValueError
         except (ValueError, TypeError):

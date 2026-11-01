@@ -315,6 +315,38 @@ def test_resize_does_not_compress(win, app):
     pump(app, timeout=0.3)
 
 
+def test_count_field_visible(win):
+    """数量输入框必须能看见数字（SpinBox 的编辑区会被样式表算成 1px）。"""
+    import ui.widgets as widgets
+
+    f = win.layout_pane.mixed_count_edit
+    assert isinstance(f, widgets.NumberField), f"数量框类型不对: {type(f).__name__}"
+    assert f.width() >= 40, f"数量框太窄，数字显示不下: {f.width()}px"
+    assert f.text().strip() != "", "数量框没有显示数字"
+    assert 1 <= f.value() <= 99, f"数量默认值越界: {f.value()}"
+
+    # 越界输入要被夹回范围内（不能留下 1000 这种值）
+    f.setValue(1000)
+    assert f.text() == "99", f"越界未夹紧: {f.text()}"
+    f.setValue(8)
+    assert f.value() == 8
+
+    # 设置对话框里的数值框同样不能用 SpinBox
+    from ui.settings_dialog import SettingsDialog
+    dlg = SettingsDialog(win, win)
+    try:
+        for name in ("kb_spin", "layout_bleed_spin", "layout_gap_h_spin",
+                     "layout_gap_v_spin", "timeout_spin"):
+            sp = getattr(dlg, name, None)
+            assert sp is not None, f"设置项 {name} 不存在"
+            assert isinstance(sp, widgets.NumberField), \
+                f"{name} 仍是 {type(sp).__name__}（数字会看不见）"
+            assert sp.width() >= 40, f"{name} 宽度 {sp.width()}px"
+            assert sp.text().strip() != "", f"{name} 没有显示数字"
+    finally:
+        dlg.deleteLater()
+
+
 def test_preset_sizes():
     """规格清单：删掉护照/签证/驾照/社保卡，加入自用1/自用2（27×36mm、32×42mm @300DPI）。"""
     from styles import PRESET_SIZES, DEFAULT_COUNT_BY_SIZE
@@ -369,6 +401,7 @@ def main():
         check("窗口缩放不压缩控件（滚动代替重叠）",
               lambda: test_resize_does_not_compress(win, app))
         check("规格清单（删 4 项 / 加自用1、自用2）", test_preset_sizes)
+        check("数量输入框可见（不用 SpinBox）", lambda: test_count_field_visible(win))
         check("旋转校正默认开启 + 下拉一致",
               lambda: test_defaults_and_dropdowns(win))
     finally:

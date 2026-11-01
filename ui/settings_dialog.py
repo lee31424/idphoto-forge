@@ -22,7 +22,7 @@ from PySide6.QtGui import QColor, QIcon, QPixmap
 
 from qfluentwidgets import (
     CardWidget, BodyLabel, StrongBodyLabel, CaptionLabel,
-    ComboBox, SpinBox, ColorPickerButton, PushButton, PrimaryPushButton,
+    ComboBox, ColorPickerButton, PushButton, PrimaryPushButton,
     FluentIcon, InfoBar, InfoBarPosition, LineEdit, Dialog, MessageBox,
 )
 
@@ -208,7 +208,7 @@ class SettingsDialog(QDialog):
         kb_row = QHBoxLayout()
         kb_row.addWidget(theme.small_label("默认 KB 限制："))
         kb_row.addStretch(1)
-        self.kb_spin = SpinBox()
+        self.kb_spin = widgets.NumberField()
         self.kb_spin.setRange(0, 2000)
         self.kb_spin.setSingleStep(50)
         self.kb_spin.setFixedWidth(150)
@@ -253,7 +253,7 @@ class SettingsDialog(QDialog):
         bleed_row = QHBoxLayout()
         bleed_row.addWidget(theme.small_label("出血线(px)："))
         bleed_row.addStretch(1)
-        self.layout_bleed_spin = SpinBox()
+        self.layout_bleed_spin = widgets.NumberField()
         self.layout_bleed_spin.setRange(0, 200)
         self.layout_bleed_spin.setValue(50)
         self.layout_bleed_spin.setFixedWidth(150)
@@ -263,14 +263,14 @@ class SettingsDialog(QDialog):
         # 横距 + 纵距
         gap_row = QHBoxLayout()
         gap_row.addWidget(theme.small_label("横距："))
-        self.layout_gap_h_spin = SpinBox()
+        self.layout_gap_h_spin = widgets.NumberField()
         self.layout_gap_h_spin.setRange(0, 50)
         self.layout_gap_h_spin.setValue(1)
         self.layout_gap_h_spin.setFixedWidth(150)
         gap_row.addWidget(self.layout_gap_h_spin)
         gap_row.addSpacing(8)
         gap_row.addWidget(theme.small_label("纵距："))
-        self.layout_gap_v_spin = SpinBox()
+        self.layout_gap_v_spin = widgets.NumberField()
         self.layout_gap_v_spin.setRange(0, 50)
         self.layout_gap_v_spin.setValue(1)
         self.layout_gap_v_spin.setFixedWidth(150)
@@ -387,7 +387,7 @@ class SettingsDialog(QDialog):
         to_row = QHBoxLayout()
         to_row.addWidget(theme.small_label("下载超时(秒)："))
         to_row.addStretch(1)
-        self.timeout_spin = SpinBox()
+        self.timeout_spin = widgets.NumberField()
         self.timeout_spin.setRange(10, 600)
         self.timeout_spin.setSingleStep(10)
         self.timeout_spin.setFixedWidth(150)
@@ -653,13 +653,13 @@ class SettingsDialog(QDialog):
         # 宽高数量
         wh_row = QHBoxLayout()
         wh_row.addWidget(BodyLabel("宽："))
-        w_spin = SpinBox(); w_spin.setRange(10, 2000); w_spin.setValue(295)
+        w_spin = widgets.NumberField(); w_spin.setRange(10, 2000); w_spin.setValue(295)
         wh_row.addWidget(w_spin)
         wh_row.addWidget(BodyLabel("高："))
-        h_spin = SpinBox(); h_spin.setRange(10, 2000); h_spin.setValue(413)
+        h_spin = widgets.NumberField(); h_spin.setRange(10, 2000); h_spin.setValue(413)
         wh_row.addWidget(h_spin)
         wh_row.addWidget(BodyLabel("张数："))
-        c_spin = SpinBox(); c_spin.setRange(1, 99); c_spin.setValue(8)
+        c_spin = widgets.NumberField(); c_spin.setRange(1, 99); c_spin.setValue(8)
         wh_row.addWidget(c_spin)
         dlg.textLayout.addLayout(wh_row)
         if not dlg.exec():
@@ -708,13 +708,13 @@ class SettingsDialog(QDialog):
         dlg.textLayout.addWidget(name_edit)
         wh_row = QHBoxLayout()
         wh_row.addWidget(BodyLabel("宽："))
-        w_spin = SpinBox(); w_spin.setRange(10, 2000); w_spin.setValue(old_w)
+        w_spin = widgets.NumberField(); w_spin.setRange(10, 2000); w_spin.setValue(old_w)
         wh_row.addWidget(w_spin)
         wh_row.addWidget(BodyLabel("高："))
-        h_spin = SpinBox(); h_spin.setRange(10, 2000); h_spin.setValue(old_h)
+        h_spin = widgets.NumberField(); h_spin.setRange(10, 2000); h_spin.setValue(old_h)
         wh_row.addWidget(h_spin)
         wh_row.addWidget(BodyLabel("张数："))
-        c_spin = SpinBox(); c_spin.setRange(1, 99); c_spin.setValue(old_c)
+        c_spin = widgets.NumberField(); c_spin.setRange(1, 99); c_spin.setValue(old_c)
         wh_row.addWidget(c_spin)
         dlg.textLayout.addLayout(wh_row)
         if not dlg.exec():
@@ -792,10 +792,10 @@ class SettingsDialog(QDialog):
         dlg.textLayout.addWidget(name_edit)
         wh_row = QHBoxLayout()
         wh_row.addWidget(BodyLabel("宽（mm）："))
-        w_spin = SpinBox(); w_spin.setRange(1, 2000); w_spin.setValue(152)
+        w_spin = widgets.NumberField(); w_spin.setRange(1, 2000); w_spin.setValue(152)
         wh_row.addWidget(w_spin)
         wh_row.addWidget(BodyLabel("高（mm）："))
-        h_spin = SpinBox(); h_spin.setRange(1, 2000); h_spin.setValue(102)
+        h_spin = widgets.NumberField(); h_spin.setRange(1, 2000); h_spin.setValue(102)
         wh_row.addWidget(h_spin)
         dlg.textLayout.addLayout(wh_row)
         if not dlg.exec():

@@ -260,11 +260,11 @@ def apply_theme(settings=None):
       * 不传 → 使用内置默认（浅色 + 橙色），供启动页在 SettingsStore
         构造之前先点亮界面。
 
-    注意：不要在此追加全局 QSS 修复 SpinBox。
+    注意：不要在此追加全局 QSS 修复数值框。
     QFluentWidgets 的控件级样式优先级高于 QApplication 全局样式表，
-    全局写法实际不生效；SpinBox 配色统一在各自的控件实例上设置
-    （见 widgets.SliderRow / layout_left_pane 的数量框）。向全局样式表
-    追加内容还会污染 Fluent 主题，影响其它控件。
+    全局写法实际不生效；数值输入统一用 widgets.NumberField（LineEdit 实现），
+    不用 SpinBox —— 见该类的注释（SpinBox 的编辑区会被样式表算成 1px）。
+    向全局样式表追加内容还会污染 Fluent 主题，影响其它控件。
     """
     global THEME_COLOR, THEME_MODE, PALETTE
     mode = "light"
@@ -422,20 +422,6 @@ def block_secondary_qss():
         f"font-size:13px;min-height:36px;}}"
         f"QPushButton:hover{{background-color:{p['border']};color:{p['text']};}}"
         f"QPushButton:pressed{{background-color:{_shade(p['border'], 0.9)};}}"
-    )
-
-
-def spinbox_qss(cls="QSpinBox"):
-    """SpinBox / DoubleSpinBox 的配色修正样式（实例级设置，勿设到全局）。
-
-    跟随主题模式反转文字/底色，保证浅色下深色字、深色下浅色字，都有对比度；
-    右侧 padding 18px 是给原生上下箭头留位，避免箭头压住数字。
-    """
-    p = pal()
-    return (
-        f"{cls}{{color:{p['text']};background-color:{p['surface2']};"
-        f"border:1px solid {p['border']};border-radius:4px;"
-        f"padding:2px 18px 2px 6px;}}"
     )
 
 

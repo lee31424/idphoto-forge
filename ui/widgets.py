@@ -31,10 +31,10 @@ from PySide6.QtWidgets import (
     QScrollArea, QFrame,
 )
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QImage, QPixmap, QColor
+from PySide6.QtGui import QImage, QPixmap, QColor, QIntValidator
 
 from qfluentwidgets import (
-    Slider, DoubleSpinBox, SpinBox, RadioButton, BodyLabel, CaptionLabel,
+    Slider, RadioButton, BodyLabel, CaptionLabel,
     Pivot, FluentIcon, ProgressBar, SwitchButton,
     PushButton, TransparentToolButton, ListWidget, ImageLabel, LineEdit,
     InfoBadge, themeColor, CardWidget, StrongBodyLabel,
@@ -83,6 +83,76 @@ class CardSection(CardWidget):
 
 
 # ============================================================
+#  整数输入框（替代 qfluentwidgets.SpinBox）
+# ============================================================
+class NumberField(LineEdit):
+    """只接受整数的 Fluent 输入框，接口兼容 SpinBox 的常用子集。
+
+    ⚠️ 为什么不用 SpinBox：本项目（PySide6 6.12 + qfluentwidgets 1.11）下，
+    SpinBox 自带的样式表 `padding: 0px 80px 0 10px` 会被 QStyleSheetStyle
+    与右侧两个 31px 按钮重复计算，内部编辑区被算成 **1px 宽** —— 数字永远
+    看不见（把宽度改成 150px 也一样）。SliderRow 早先的 DoubleSpinBox 是同一
+    问题，当时的结论就是「改用 LineEdit」。
+
+    对外提供与 SpinBox 同名的方法，替换时调用方几乎不用改：
+        value() / setValue(v) / setRange(lo, hi) / setSingleStep(n)
+    范围外的输入在失焦时会被夹回合法值。
+    """
+
+    def __init__(self, value=0, minimum=0, maximum=9999, parent=None, width=None):
+        super().__init__(parent)
+        self._min = int(minimum)
+        self._max = int(maximum)
+        self._step = 1
+        self.setAlignment(Qt.AlignCenter)
+        self._apply_validator()
+        self.setValue(value)
+        if width is not None:
+            self.setFixedWidth(int(width))
+        self.setToolTip(f"可输入 {self._min} ~ {self._max}")
+
+    def _apply_validator(self):
+        self.setValidator(QIntValidator(self._min, self._max, self))
+
+    # ---- SpinBox 兼容接口 ----
+    def setRange(self, minimum, maximum):
+        self._min, self._max = int(minimum), int(maximum)
+        self._apply_validator()
+        self.setValue(self.value())
+
+    def setSingleStep(self, step):
+        self._step = max(1, int(step))
+
+    def value(self):
+        try:
+            v = int(str(self.text()).strip())
+        except (TypeError, ValueError):
+            return self._min
+        return max(self._min, min(self._max, v))
+
+    def setValue(self, value):
+        try:
+            v = int(value)
+        except (TypeError, ValueError):
+            v = self._min
+        self.setText(str(max(self._min, min(self._max, v))))
+
+    # ---- 交互 ----
+    def focusOutEvent(self, event):
+        # 留空或越界时归一化，避免控件里留一片空白
+        self.setValue(self.value())
+        super().focusOutEvent(event)
+
+    def keyPressEvent(self, event):
+        # 上下键按 step 加减（SpinBox 的习惯操作）
+        if event.key() in (Qt.Key_Up, Qt.Key_Down):
+            delta = self._step if event.key() == Qt.Key_Up else -self._step
+            self.setValue(self.value() + delta)
+            return
+        super().keyPressEvent(event)
+
+
+# ============================================================
 #  滑块行（标签 + 数字框 + 滑块）
 # ============================================================
 class SliderRow(QWidget):
@@ -91,8 +161,8 @@ class SliderRow(QWidget):
 
     数值框用 Fluent LineEdit（而非 DoubleSpinBox）：DoubleSpinBox 在本项目
     Fluent 主题下数值文字始终渲染不可见（高级/美颜面板所有滑块都看不到数字），
-    实测实例级套 spinbox_qss 也无效；LineEdit 文字渲染正常（与留白/KB 输入框
-    一致），数值必定可见，且保留手动输入能力。
+    实例级套自定义 QSS 也无效（QStyleSheetStyle 会把编辑区算成 1px，见
+    NumberField 的注释）；LineEdit 文字渲染正常，数值必定可见，且可手动输入。
     """
 
     # 数值变化信号（滑块拖动 / 手动输入），供实时预览等联动

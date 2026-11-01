@@ -193,6 +193,7 @@ app.py (IDPhotoApp)
 | 一键排版与排版页配置冲突 | 旧流程存在「一键排版」按钮，尺寸来源混乱 | 已删除「一键排版」按钮，统一走 `on_generate_mixed_layout`：读排版页 `get_mixed_items()` 规格/数量 + `ready_photos` 成品列表（见 §2.1 app.py） |
 | 移除中间照片后结果错位 | `on_remove_queue_image` pop 后 `processed_results` 索引未前移 | pop 后统一重排：被移除结果丢弃、后续索引前移 1（8/18） |
 | 缩略图滚轮互相抢全局绑定 | `bind_all("<MouseWheel>")` 多实例覆盖，后创建抢走 handler | 改控件级绑定 + `return "break"`（8/18） |
+| **Fluent SpinBox 数字看不见** | `SpinBox` 内部编辑区只有 **1px** 宽，设成 72/150px 都一样，数字完全不显示（qfluentwidgets 1.11 + PySide6 6.12）。根源是它自带 QSS 的 `padding: 0 80px 0 10px` 与右侧两个 31px 按钮被 `QStyleSheetStyle` 重复扣减 | 数值输入一律改用 `widgets.NumberField`（LineEdit + `QIntValidator`，接口兼容 `value/setValue/setRange`）；原生 `QSpinBox` 不受影响（`model_download_dialog` 仍在用，实测编辑区 48px 正常） |
 
 ---
 
@@ -327,6 +328,7 @@ python -c "import sys; sys.path.insert(0,'.'); import app; print('IMPORT_APP_OK'
 | 17 | 人脸旋转校正**默认开启** | `process_view._tab_basic` 里 `rotation_switch.setChecked(True)`；`face_alignment` 仍由该开关决定，用户可关 |
 | 18 | 调整窗口大小时控件不重排 / 位置偏移 | ① `TabStrip` 每个页签、排版页整页都包进 `widgets.wrap_scrollable()`（内容高于窗口时滚动，而不是被压到 `minimumSizeHint` 以下导致卡片重叠）；② 右栏宽度 300~420 → **360~480**（360 是"目标尺寸"那一行的实际最小宽度）；③ 新增 `IDPhotoApp.resizeEvent` + `_apply_split_layout()`，按 左16% : 中60% : 右24% 重排三栏，用户拖过分隔条后按他拖出的比例走 |
 | 19 | 排版规格：删护照/签证/驾照/社保卡，加自用1/自用2 | 只改 `styles.PRESET_SIZES`（删 4 项，加 `("自用1",319,425)`、`("自用2",378,496)`，即 27×36mm / 32×42mm @300DPI）与 `DEFAULT_COUNT_BY_SIZE`；处理页删掉原先硬编码的自用1/2 循环，与排版页共用同一份清单 |
+| 20 | 排版规格「数量」框看不到数字 | 不是宽度问题：`qfluentwidgets.SpinBox` 的编辑区恒为 1px（见 §5 坑表）。新增 `widgets.NumberField`（LineEdit + `QIntValidator`，接口兼容 SpinBox），替换排版页数量框、设置里 5 个数值框（KB/留白/横距/纵距/超时）以及规格/纸张对话框里的宽·高·张数框；删除已无用的 `theme.spinbox_qss`。实测数量框 72×33、文字区完整，截图内深色像素 34（空框为 2），数字确实画出来了 |
 
 > 附：`布局页` 之前把整列最小高度顶到 766px，导致 700 高的窗口把主窗口内容区挤出屏幕（底部被裁）。现在 `LayoutView.minimumSizeHint()` 降到 68px，窗口 1000×700 时不再裁切。
 
@@ -334,3 +336,4 @@ python -c "import sys; sys.path.insert(0,'.'); import app; print('IMPORT_APP_OK'
 
 6. **参数面板类页面必须放在 `widgets.wrap_scrollable()` 里**，否则内容高度会顶高整窗最小高度、或在窗口变矮时压出重叠。
 7. **规格只改 `styles.PRESET_SIZES`**（元组顺序是 `(名称, 宽, 高)`）。处理页与排版页都从这一份派生，不要在页面里再硬编码尺寸表。
+8. **数值输入用 `widgets.NumberField`，不要用 `qfluentwidgets.SpinBox`**（编辑区 1px，数字看不见）；原生 `QSpinBox` 可以用。
