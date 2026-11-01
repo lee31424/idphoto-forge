@@ -313,13 +313,19 @@ def apply_beauty(image_bgr: np.ndarray, params: dict, alpha=None) -> np.ndarray:
 
     result = roi.astype(np.float32)
 
-    # ---- 磨皮：双边滤波（保边平滑）+ 高频回加 ----
+    # ---- 磨皮：半分辨率双边滤波（保边平滑）+ 高频回加 ----
     if smooth > 0:
-        strength = min(max(smooth, 0), 10) / 10.0 * 0.85
-        smoothed = cv2.bilateralFilter(roi, 9, 75, 75).astype(np.float32)
+        # 强度曲线：默认 3 就能看出效果，10 封顶 95%，避免塑料脸
+        strength = (min(max(smooth, 0), 10) / 10.0) ** 0.85 * 0.95
+        rh, rw = roi.shape[:2]
+        # 半分辨率做双边：同样的 d 覆盖范围大 2 倍，效果更明显且更快
+        small = cv2.resize(roi, (max(1, rw // 2), max(1, rh // 2)),
+                           interpolation=cv2.INTER_AREA)
+        small = cv2.bilateralFilter(small, 15, 100, 100)
+        smoothed = cv2.resize(small, (rw, rh), interpolation=cv2.INTER_LINEAR)
         base = cv2.GaussianBlur(roi, (0, 0), 2.0).astype(np.float32)
         detail = result - base
-        blended = np.clip(smoothed + detail * 0.35, 0, 255)
+        blended = np.clip(smoothed.astype(np.float32) + detail * 0.25, 0, 255)
         k = (roi_mask * strength)[..., None]
         result = result * (1.0 - k) + blended * k
 
