@@ -1630,14 +1630,29 @@ class IDPhotoApp(QMainWindow):
     # ----------------------------------------------------------
     #  排版
     # ----------------------------------------------------------
+    @staticmethod
+    def _source_display_label(item):
+        """页角标注用的来源名：上级目录名 + 文件名。
+
+        例：I:\\导出测试\\_F8A4960.jpg → "导出测试\\_F8A4960.jpg"。
+        没有路径（例如只在内存里处理的图）时退回名称。
+        """
+        path = item.get("path") or ""
+        if path:
+            parent = os.path.basename(os.path.dirname(path))
+            name = os.path.basename(path)
+            return f"{parent}\\{name}" if parent else name
+        return item.get("name") or ""
+
     def _collect_layout_source_photos(self):
-        """排版数据源：每张成品带上标准照 / 高清照 / 抠图三份。"""
+        """排版数据源：每张成品带上标准照 / 高清照 / 抠图 + 页角标注。"""
         photos = []
         for it in self.ready_photos:
             if it.get("image") is not None:
                 photos.append({"image": it["image"],
                                "hd": it.get("hd"),
-                               "matting": it.get("matting")})
+                               "matting": it.get("matting"),
+                               "label": self._source_display_label(it)})
         return photos
 
     @staticmethod
@@ -1702,8 +1717,32 @@ class IDPhotoApp(QMainWindow):
                 resized = self._center_crop_to_size(base_img, w, h)
                 for _ in range(count):
                     items.append(LayoutItem(image=resized.copy(),
-                                            width=w, height=h, label=name))
+                                            width=w, height=h, label=name,
+                                            source=src.get("label", "")))
         return items
+
+    @staticmethod
+    def _draw_page_labels(pages, page_sources):
+        """给每页右下角画来源标注（纯计算，可放后台线程）。
+
+        一页通常对应一张成品（例如自用2×8 正好排满一页）；若一页混了多张
+        成品，就把它们列出来，超过 3 个时用「首个 等N个」概括。
+        """
+        from image_utils import draw_bottom_right_label
+        for i, page in enumerate(pages):
+            srcs = page_sources[i] if i < len(page_sources) else []
+            uniq = []
+            for s in srcs:
+                if s and s not in uniq:
+                    uniq.append(s)
+            if not uniq:
+                continue
+            if len(uniq) <= 2:
+                text = "、".join(uniq)
+            else:
+                text = f"{uniq[0]} 等{len(uniq)}个"
+            draw_bottom_right_label(page, text)
+        return pages
 
     def _compute_layout_pages(self, items, params):
         """LayoutItem 列表 → 画布页（纯计算）。返回 (pages, skipped, labels)。"""
@@ -1721,12 +1760,15 @@ class IDPhotoApp(QMainWindow):
             pages = engine.generate_photos(
                 [it.image for it in items], w, h,
                 crop_line=params["crop_line"],
-                crop_line_full_page=params["crop_full"])
+                crop_line_full_page=params["crop_full"],
+                sources=[getattr(it, "source", "") for it in items])
+            self._draw_page_labels(pages, engine.last_page_sources)
             return pages, [], []
 
         pages = engine.generate_mixed_size(
             items, crop_line=params["crop_line"],
             crop_line_full_page=params["crop_full"])
+        self._draw_page_labels(pages, engine.last_page_sources)
         skipped = list(getattr(engine, "last_skipped_sizes", []))
         label_by_size = {}
         for it in items:
@@ -1804,6 +1846,8 @@ class IDPhotoApp(QMainWindow):
                     else self.standard_matting,
                     "hd": self.hd_image,
                     "matting": self.standard_matting,
+                    "label": self._source_display_label(
+                        {"path": self.original_file_path, "name": "证件照"}),
                 }
                 # 单张兜底：只有一张，同步即可
                 self._rebuild_layout_from_sources(show=True, source_photos=[src])

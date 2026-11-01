@@ -3,15 +3,76 @@
 图像处理工具函数模块
 负责图像格式转换、缩放、裁剪、美颜、水印等底层操作，不涉及业务逻辑。
 """
+import os
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import io
 
 from color_utils import hex_to_rgb_tuple
 
 # 渐变背景的终止色（白色），与起始色做线性混合
 GRADIENT_END_COLOR = (255.0, 255.0, 255.0)
+
+# 字体缓存：页面标注每页都要用，重复 truetype 解析很慢
+_FONT_CACHE = {}
+
+
+def _get_cjk_font(size):
+    """取一个能显示中文的 TrueType 字体（失败时回退 PIL 默认字体）。"""
+    if size in _FONT_CACHE:
+        return _FONT_CACHE[size]
+    win_dir = os.environ.get("WINDIR", r"C:\Windows")
+    for name in ("msyh.ttc", "msyhbd.ttc", "simhei.ttf", "simsun.ttc"):
+        path = os.path.join(win_dir, "Fonts", name)
+        if os.path.exists(path):
+            try:
+                font = ImageFont.truetype(path, size)
+                _FONT_CACHE[size] = font
+                return font
+            except Exception:
+                continue
+    font = ImageFont.load_default()
+    _FONT_CACHE[size] = font
+    return font
+
+
+def draw_bottom_right_label(image_bgr, text, margin=18, font_size=None,
+                            text_color=(70, 70, 70), bg_color=(255, 255, 255, 210)):
+    """在图片右下角画一行来源标注（带半透明白底，避免压住照片看不清）。
+
+    只处理右下角的小块区域（不整页做 RGBA 合成），100 多页也不会明显变慢。
+    返回同一张图（原地修改）。
+    """
+    if image_bgr is None or not text:
+        return image_bgr
+    height, width = image_bgr.shape[:2]
+    size = int(font_size or max(14, round(width / 75)))
+    font = _get_cjk_font(size)
+
+    # 量文字尺寸（textbbox 的 left/top 可能非 0，绘制时要减掉）
+    probe = Image.new("RGB", (1, 1))
+    bbox = ImageDraw.Draw(probe).textbbox((0, 0), text, font=font)
+    text_w, text_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    pad_x = max(6, size // 3)
+    pad_y = max(3, size // 6)
+    box_w = min(width, text_w + pad_x * 2)
+    box_h = min(height, text_h + pad_y * 2)
+
+    x0 = max(0, width - margin - box_w)
+    y0 = max(0, height - margin - box_h)
+    x1 = min(width, x0 + box_w)
+    y1 = min(height, y0 + box_h)
+
+    roi = image_bgr[y0:y1, x0:x1]
+    pil = Image.fromarray(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)).convert("RGBA")
+    draw = ImageDraw.Draw(pil)
+    draw.rectangle([0, 0, pil.width - 1, pil.height - 1], fill=bg_color)
+    draw.text((pad_x - bbox[0], pad_y - bbox[1]), text, font=font,
+              fill=text_color + (255,))
+    image_bgr[y0:y1, x0:x1] = cv2.cvtColor(
+        np.array(pil.convert("RGB")), cv2.COLOR_RGB2BGR)
+    return image_bgr
 
 
 def resize_image_esp(input_image: np.ndarray, max_side: int = 2000) -> np.ndarray:

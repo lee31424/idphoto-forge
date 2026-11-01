@@ -430,6 +430,42 @@ def test_layout_picks_hd_by_target(win):
     win.layout_pane.mixed_items = []
 
 
+def test_layout_page_label(win):
+    """排版页右下角标注来源：上级目录名\\文件名。"""
+    import app as appmod
+
+    lv = win.pages["layout"]
+    old_crop = lv.crop_line_switch.isChecked()
+    lv.crop_line_switch.setChecked(False)   # 关掉裁切线，角落应是纯白，便于判定
+    try:
+        assert appmod.IDPhotoApp._source_display_label(
+            {"path": r"I:\导出测试\_F8A4960.jpg"}) == r"导出测试\_F8A4960.jpg"
+
+        std = np.full((413, 295, 4), 120, dtype=np.uint8)
+        win.ready_photos = [{"name": "_F8A4960.jpg",
+                             "path": r"I:\导出测试\_F8A4960.jpg",
+                             "image": std, "matting": None, "hd": None}]
+        win.layout_pane.mixed_items = [("自用2", 378, 496, 8, "")]
+        assert win._rebuild_layout_from_sources(show=False)
+        page = win.layout_pages[0]
+        h, w = page.shape[:2]
+        region = page[h - 70:h - 10, w - 620:w - 10]
+        assert int(region.min()) < 120, f"右下角没有来源标注（min={region.min()}）"
+
+        # 没有来源（无路径、无名称）时不应画
+        win.ready_photos = [{"name": "", "path": "", "image": std,
+                             "matting": None, "hd": None}]
+        win._rebuild_layout_from_sources(show=False)
+        page2 = win.layout_pages[0]
+        region2 = page2[h - 70:h - 10, w - 620:w - 10]
+        assert int(region2.min()) > 240, f"无来源时不该画标注（min={region2.min()}）"
+    finally:
+        lv.crop_line_switch.setChecked(old_crop)
+        win.ready_photos = []
+        win.layout_pane.mixed_items = []
+        win.layout_pages = []
+
+
 def test_ready_list_hd_marker(win):
     """成品列表：有高清版的条目带 HD 标记，没有的不带。"""
     small = np.full((100, 80, 4), 90, dtype=np.uint8)
@@ -682,6 +718,7 @@ def main():
         check("选项默认值（出血50/横距20/纵距20）", lambda: test_layout_option_defaults(win))
         check("排版按规格自动选高清图", lambda: test_layout_picks_hd_by_target(win))
         check("成品列表 HD 标记", lambda: test_ready_list_hd_marker(win))
+        check("排版页右下角来源标注", lambda: test_layout_page_label(win))
         check("批量导出排版图（多页）", lambda: test_export_all_layouts(win, app))
         check("排版后台生成（不卡 UI）", lambda: test_generate_layout_async(win, app))
         check("导出 .part 失败自动回退", lambda: test_export_part_fallback(win))

@@ -34,11 +34,13 @@ SIZE_LINE_COLORS = [
 class LayoutItem:
     """排版中的一个照片条目。"""
 
-    def __init__(self, image: np.ndarray, width: int, height: int, label: str = ""):
+    def __init__(self, image: np.ndarray, width: int, height: int,
+                 label: str = "", source: str = ""):
         self.image = image        # 已裁好的标准照（BGR 或 BGRA）
         self.width = int(width)   # 照片宽度（像素）
         self.height = int(height) # 照片高度（像素）
         self.label = label        # 尺寸标签（如 "一寸"）
+        self.source = source      # 来源标注（如 "导出测试\_F8A4960.jpg"），画在页角
         self.placed_x = 0         # 排版后的 x 坐标
         self.placed_y = 0         # 排版后的 y 坐标
         self.placed_page = 0      # 所在页码
@@ -70,6 +72,8 @@ class LayoutEngine:
         self.last_skipped_sizes = []
         # 最近一次混合排版中，尺寸 (w,h) -> 裁剪线颜色（BGR），供 UI 生成图例
         self.last_size_colors = {}
+        # 最近一次排版中「每页包含哪些来源」（list[list[str]]），供页面角标使用
+        self.last_page_sources = []
 
     def generate_single_size(
         self,
@@ -78,6 +82,7 @@ class LayoutEngine:
         photo_height: int,
         crop_line: bool = False,
         crop_line_full_page: bool = True,
+        source: str = "",
     ) -> list:
         """
         生成单一尺寸的排版图（单张照片重复多份，常用于「一版多张相同照」）。
@@ -86,6 +91,7 @@ class LayoutEngine:
         return self._layout_photos(
             [photo], photo_width, photo_height, crop_line, repeat=True,
             crop_line_full_page=crop_line_full_page,
+            sources=[source] if source else None,
         )
 
     def generate_photos(
@@ -95,16 +101,18 @@ class LayoutEngine:
         photo_height: int,
         crop_line: bool = False,
         crop_line_full_page: bool = True,
+        sources: list = None,
     ) -> list:
         """
         生成单一尺寸的排版图（多张不同照片各排一份，自动分页）。
 
         用于「一键排版 / 发送到排版」等批量场景：队列里每张照片各排一份，
         照片数量超过一页容量时自动翻页，避免只排第一张的「只有一版」问题。
+        sources: 与 photos 等长的来源标注列表（可选），用于页角标注。
         """
         return self._layout_photos(
             list(photos), photo_width, photo_height, crop_line, repeat=False,
-            crop_line_full_page=crop_line_full_page,
+            crop_line_full_page=crop_line_full_page, sources=sources,
         )
 
     def _layout_photos(
@@ -115,14 +123,18 @@ class LayoutEngine:
         crop_line: bool,
         repeat: bool,
         crop_line_full_page: bool = True,
+        sources: list = None,
     ) -> list:
         """核心排版：把多张照片按网格铺到画布（可多页）。
 
         repeat=True : 仅有一张照片时将其重复填满每一页（一版多张相同照）。
         repeat=False: 每张照片各排一份，用完即止，超出单页容量自动翻页。
+        sources     : 与 photos 等长的来源标注（可选），按页记录到 last_page_sources。
         """
         if not photos:
             raise ValueError("输入照片为空")
+        if sources is not None and len(sources) != len(photos):
+            sources = None
         # 校验并统一为 BGR；显式转 Python 标量，杜绝 numpy 布尔歧义
         norm_photos = []
         for p in photos:
@@ -149,13 +161,17 @@ class LayoutEngine:
             # 单张重复：每页排满 count_per_page 份相同照
             to_place = [norm_photos[0]] * count_per_page
             total = count_per_page
+            source_seq = [sources[0]] * total if sources else []
         else:
             to_place = norm_photos
             total = len(norm_photos)
+            source_seq = list(sources) if sources else []
 
         pages = []
+        self.last_page_sources = []
         for start in range(0, total, count_per_page):
             chunk = to_place[start:start + count_per_page]
+            chunk_sources = source_seq[start:start + count_per_page]
             canvas = self._create_blank_canvas()
             positions = []
             block_w = cols * place_w + (cols - 1) * self.photo_interval_h
@@ -182,6 +198,7 @@ class LayoutEngine:
                 x, y, w, h = positions[k]
                 self._paste_image(canvas, placed, x, y)
             pages.append(canvas)
+            self.last_page_sources.append(chunk_sources)
 
         return pages
 
@@ -261,6 +278,8 @@ class LayoutEngine:
 
         page_canvas = self._create_blank_canvas()
         page_placements = []   # (x, y, w, h, photo_bgr)：先收集，最后统一画线再贴图
+        page_sources = []      # 与 page_placements 对应的来源标注
+        self.last_page_sources = []
         # 当前行的状态
         y = start_y           # 下一行的顶部 y
         row_size = None       # 当前行尺寸 (w, h)
@@ -294,14 +313,16 @@ class LayoutEngine:
             for (px, py, pw, ph, pphoto) in page_placements:
                 self._paste_image(page_canvas, pphoto, px, py)
             pages.append(page_canvas)
+            self.last_page_sources.append(list(page_sources))
 
         def new_page():
             """收尾当前页并开新空白页，重置行/光标状态。"""
-            nonlocal page_canvas, page_placements, y, row_size, row_w, row_h, row_start_x, x
+            nonlocal page_canvas, page_placements, page_sources, y, row_size, row_w, row_h, row_start_x, x
             if page_placements:
                 flush_page()
             page_canvas = self._create_blank_canvas()
             page_placements = []
+            page_sources = []
             y = start_y
             row_size = None
             row_w = row_h = 0
@@ -334,6 +355,7 @@ class LayoutEngine:
 
                 photo = self._flatten_to_bgr(it.image)
                 page_placements.append((x, y, w, h, photo))
+                page_sources.append(getattr(it, "source", "") or "")
                 x += w + self.photo_interval_h
 
         # 收尾最后一页
