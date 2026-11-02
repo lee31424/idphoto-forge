@@ -727,7 +727,8 @@ def test_preset_sizes():
 
     assert table.get("自用1") == (319, 425), f"自用1 = {table.get('自用1')}"
     assert table.get("自用2") == (378, 496), f"自用2 = {table.get('自用2')}"
-    for name in ("自用1", "自用2"):
+    assert table.get("学籍") == (480, 640), f"学籍 = {table.get('学籍')}"
+    for name in ("自用1", "自用2", "学籍"):
         assert name in DEFAULT_COUNT_BY_SIZE, f"{name} 缺少默认数量"
 
 
