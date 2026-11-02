@@ -679,8 +679,23 @@ class ProcessView(QWidget):
             return None
         return data  # None 或预设 (高, 宽)
 
-    def _on_size_combo_changed(self):
-        is_custom = (self.size_combo.currentData() == "custom")
+    def _on_size_combo_changed(self, *_):
+        """选中预设时，把该规格的像素尺寸同步显示到下方输入框（只读）。
+
+        「通用（默认构图）」没有具体规格，显示处理器实际使用的
+        UNIVERSAL_PHOTO_SIZE；只有「自定义」才允许编辑。
+        """
+        data = self.size_combo.currentData()
+        is_custom = (data == "custom")
+        if not is_custom:
+            if isinstance(data, (tuple, list)) and len(data) == 2:
+                h, w = int(data[0]), int(data[1])   # userData 是 (高, 宽)
+            else:
+                from photo_processor import UNIVERSAL_PHOTO_SIZE
+                h, w = UNIVERSAL_PHOTO_SIZE
+            self.size_w_edit.setText(str(w))
+            self.size_h_edit.setText(str(h))
+            self.size_unit_combo.setCurrentIndex(0)  # 预设一律按 px 显示
         self.size_w_edit.setEnabled(is_custom)
         self.size_h_edit.setEnabled(is_custom)
         self.size_unit_combo.setEnabled(is_custom)

@@ -348,6 +348,7 @@ python -c "import sys; sys.path.insert(0,'.'); import app; print('IMPORT_APP_OK'
 | 37 | 缓存只能放系统临时目录，C 盘小会被塞满；没有空间提示 | ① 「设置 → 存储」新增卡片：显示/选择缓存目录、恢复默认、立即清理、显示该目录可用空间；持久化到 `storage.cache_dir`（空 = 系统临时目录）。② `_switch_cache_dir()` **立即生效**：新结果写新目录，旧 `StoredResult` 仍持旧 store 可读，`_result_stores` 记录本次创建过的所有目录，退出统一清理。③ 启动时若默认缓存盘 <30GB，弹一次提示建议改目录。④ 批量前 `_check_batch_cache_space()` 按「张数 × 5MB × 1.5」估算，空间不足弹窗（继续/取消）。回归新增「自定义缓存目录」（33/33） |
 | 38 | 设置保存后「自动重启」只停事件循环，旧进程不关窗口 | 旧 `_do_restart` 直接 `QApplication.quit()`：窗口没关 → `closeEvent` 不执行 → 缓存不清理、设置不落盘、invoker 不停，残留线程还可能让旧进程活着（两个实例）。改为 `IDPhotoApp.restart_app(delay_ms)`：先 `self.close()`（正常触发 `closeEvent` 清理）→ `processEvents()` → 再拉起新进程（Windows 用 `DETACHED_PROCESS`，其余 `os.execv`）→ `quit()`，并用 `threading.Timer(2, os._exit)` 兜底强杀。设置对话框改调该方法。回归新增「重启前先关闭窗口」（34/34） |
 | 39 | 需要「学籍」规格 480×640px | `styles.PRESET_SIZES` 增加 `("学籍", 480, 640)`（处理页目标尺寸显示「学籍（41×54mm）」，排版页规格同步出现；`size` 仍按 (高, 宽) 传），`DEFAULT_COUNT_BY_SIZE["学籍"] = 3`（6 寸纸一排 3 张）。回归补充断言（34/34） |
+| 40 | 高级目标尺寸选预设后，下方像素输入框不显示对应尺寸 | `_on_size_combo_changed` 改为：选预设时把 `userData`（高, 宽）反填成「宽 × 高」，单位切回 px 并保持只读；「通用（默认构图）」显示处理器实际使用的 `UNIVERSAL_PHOTO_SIZE`（1000×1400）；只有「自定义」允许编辑。回归新增「目标尺寸同步显示像素」（35/35） |
 
 > 附：`布局页` 之前把整列最小高度顶到 766px，导致 700 高的窗口把主窗口内容区挤出屏幕（底部被裁）。现在 `LayoutView.minimumSizeHint()` 降到 68px，窗口 1000×700 时不再裁切。
 

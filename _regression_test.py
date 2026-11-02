@@ -1041,6 +1041,28 @@ def test_generate_layout_async(win, app):
     win.layout_pages = []
 
 
+def test_size_combo_syncs_pixels(win):
+    """目标尺寸选预设时，下方输入框应同步显示对应像素（宽×高），且只读。"""
+    pv = win.pages["process"]
+    combo = pv.size_combo
+
+    def pick(name):
+        idx = next(i for i in range(combo.count())
+                   if combo.itemText(i).startswith(name))
+        combo.setCurrentIndex(idx)
+
+    pick("一寸")
+    assert (pv.size_w_edit.text(), pv.size_h_edit.text()) == ("295", "413"), \
+        (pv.size_w_edit.text(), pv.size_h_edit.text())
+    pick("学籍")
+    assert (pv.size_w_edit.text(), pv.size_h_edit.text()) == ("480", "640"), \
+        (pv.size_w_edit.text(), pv.size_h_edit.text())
+    assert not pv.size_w_edit.isEnabled(), "预设尺寸不应可编辑"
+    pick("自定义")
+    assert pv.size_w_edit.isEnabled() and pv.size_h_edit.isEnabled(), \
+        "自定义尺寸必须可编辑"
+
+
 def test_default_paper(win):
     """排版默认纸张是 6 寸相纸（152×102mm），画布 1795×1205 @300DPI。"""
     import styles
@@ -1120,6 +1142,7 @@ def main():
         check("旋转校正默认开启 + 下拉一致",
               lambda: test_defaults_and_dropdowns(win))
         check("重启前先关闭窗口", lambda: test_restart_closes_window_first(win))
+        check("目标尺寸同步显示像素", lambda: test_size_combo_syncs_pixels(win))
     finally:
         win._invoker.stop()
 
